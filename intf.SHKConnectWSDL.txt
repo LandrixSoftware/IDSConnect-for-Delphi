@@ -1,0 +1,4 @@
+https://shkgh20.shk-connect.de/services/ProzessListe?wsdl=intf.SHKConnectProzessListe.pas
+https://shkgh20.shk-connect.de/services/Branchenliste?wsdl=intf.SHKConnectBranchenliste.pas
+https://shkgh20.shk-connect.de/services/AllgemeineAuskuenfte?wsdl=intf.SHKConnectAllgemeineAuskuenfte.pas
+https://shkgh20.shk-connect.de/services/AnwenderIndividuelleAuskuenfte?wsdl=intf.SHKConnectAnwenderIndividuelleAuskuenfte.pas
