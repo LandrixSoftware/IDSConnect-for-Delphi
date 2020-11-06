@@ -9,7 +9,7 @@
 // (02.11.2020 22:45:08 - - $Rev: 101104 $)
 // ************************************************************************ //
 
-unit intf_SHKConnectAllgemeineAuskuenfte;
+unit intf.SHKConnectAllgemeineAuskuenfte;
 
 interface
 
