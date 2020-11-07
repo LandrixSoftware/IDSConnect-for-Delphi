@@ -8,28 +8,28 @@ Weitere Informationen unter https://www.itek.de/services/open-connect
 
 english version below
 
-Die Bibliothek "OpenConnect-for-Delphi" unterliegt eine Doppellizenz. Sie können Sie kostenlos und
- ohne Einschränkungen unter der [GPL v3.0] (https://www.gnu.org/licenses/gpl-3.0.en.html) verwenden, oder Sie erwerben
+Die Bibliothek "OpenConnect-for-Delphi" unterliegt eine Doppellizenz. Sie kÃ¶nnen Sie kostenlos und
+ ohne EinschrÃ¤nkungen unter der [GPL v3.0](https://www.gnu.org/licenses/gpl-3.0.en.html) verwenden, oder Sie erwerben
 eine Lizenz zur kommerziellen Nutzung unter der [Landrix Software Commercial License] (commercial.license.md)
 
-Eine kommerzielle Lizenz gewährt Ihnen das Recht, OpenConnect-for-Delphi 
+Eine kommerzielle Lizenz gewÃ¤hrt Ihnen das Recht, OpenConnect-for-Delphi 
 in Ihren eigenen Anwendungen zu verwenden. Lizenzfrei und ohne Verpflichtung zur 
-Offenlegung Ihres Quellcodes oder Änderungen an die Landrix Software oder eine anderen Partei. 
-Eine kommerzielle Lizenz gilt auf Dauer und berechtigt Sie kostenlos zu allen zukünftigen Updates.
+Offenlegung Ihres Quellcodes oder Ã„nderungen an die Landrix Software oder eine anderen Partei. 
+Eine kommerzielle Lizenz gilt auf Dauer und berechtigt Sie kostenlos zu allen zukÃ¼nftigen Updates.
 
-Jeder Entwickler, der Anwendungen mit der Bibliothek OpenConnect-for-Delphi entwickelt, benötigt eine Lizenz.
-Die Kosten dafür betragen 200,00 EUR zzgl. MwSt. pro Entwickler.
+Jeder Entwickler, der Anwendungen mit der Bibliothek OpenConnect-for-Delphi entwickelt, benÃ¶tigt eine Lizenz.
+Die Kosten dafÃ¼r betragen 200,00 EUR zzgl. MwSt. pro Entwickler.
 
 Bitte senden Sie eine E-Mail an info@landrix.de, um eine Rechnung mit den Zahlungsinformationen anzufordern.
 
 Support- und Erweiterungsanfragen von lizensierten Benutzern werden bevorzugt behandelt. 
-Neue Entwicklungen können abhängig von der für die Implementierung erforderlichen Zeit zusätzliche Kosten verursachen.
+Neue Entwicklungen kÃ¶nnen abhÃ¤ngig von der fÃ¼r die Implementierung erforderlichen Zeit zusÃ¤tzliche Kosten verursachen.
 
 english version
 
 The "OpenConnect-for-Delphi" library is dual-licensed. You may choose to use it under the restrictions of 
 the [GPL v3.0](https://www.gnu.org/licenses/gpl-3.0.en.html) at no cost to you, or you may purchase 
-for user under the [Landrix Software Commercial License](commercial.license.md)
+for user under the [Landrix Software Commercial License](./commercial.license.md)
 
 A commercial licence grants you the right to use OpenConnect-for-Delphi in your own applications, 
 royalty free, and without any requirement to disclose your source code nor any modifications to
