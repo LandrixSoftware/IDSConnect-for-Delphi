@@ -1,3 +1,5 @@
+[![Donate](https://img.shields.io/badge/Donate-PayPal-green.svg)](https://www.paypal.com/cgi-bin/webscr?cmd=_s-xclick&hosted_button_id=5V8N3XFTU495G)
+
 # OpenConnect-for-Delphi
 
 Umsetzung der SHKConnect- und der IDSConnect-Schnittstelle
@@ -14,7 +16,7 @@ eine Lizenz zur kommerziellen Nutzung unter der [Landrix Software Commercial Lic
 
 Eine kommerzielle Lizenz gewährt Ihnen das Recht, OpenConnect-for-Delphi 
 in Ihren eigenen Anwendungen zu verwenden. Lizenzfrei und ohne Verpflichtung zur 
-Offenlegung Ihres Quellcodes oder Änderungen an die Landrix Software oder eine anderen Partei. 
+Offenlegung Ihres Quellcodes oder Änderungen an die Landrix Software oder einer anderen Partei. 
 Eine kommerzielle Lizenz gilt auf Dauer und berechtigt Sie kostenlos zu allen zukünftigen Updates.
 
 Jeder Entwickler, der Anwendungen mit der Bibliothek OpenConnect-for-Delphi entwickelt, benötigt eine Lizenz.
