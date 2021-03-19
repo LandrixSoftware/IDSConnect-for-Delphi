@@ -1,7 +1,7 @@
-object Form5: TForm5
+object MainForm: TMainForm
   Left = 0
   Top = 0
-  Caption = 'SHKConnect / IDSConnect'
+  Caption = 'IDSConnect-Schnittstelle 2.5'
   ClientHeight = 895
   ClientWidth = 1279
   Color = clBtnFace

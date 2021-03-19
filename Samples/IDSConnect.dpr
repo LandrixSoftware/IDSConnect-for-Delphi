@@ -1,14 +1,14 @@
-program SHKIDSConnect;
+program IDSConnect;
 
 uses
   Vcl.Forms,
-  SHKIDSConnectUnit1 in 'SHKIDSConnectUnit1.pas' {Form5};
+  IDSConnectUnit1 in 'IDSConnectUnit1.pas' {MainForm};
 
 {$R *.res}
 
 begin
   Application.Initialize;
   Application.MainFormOnTaskbar := True;
-  Application.CreateForm(TForm5, Form5);
+  Application.CreateForm(TMainForm, MainForm);
   Application.Run;
 end.

@@ -1,14 +1,14 @@
-unit SHKIDSConnectUnit1;
+unit IDSConnectUnit1;
 
 interface
 
 uses
   Winapi.Windows, Winapi.Messages, System.SysUtils, System.Variants, System.Classes, Vcl.Graphics,
   Vcl.Controls, Vcl.Forms, Vcl.Dialogs, Vcl.StdCtrls
-  ,intf.SHKIDSConnect;
+  ,intf.IDSConnect;
 
 type
-  TForm5 = class(TForm)
+  TMainForm = class(TForm)
     ListBox1: TListBox;
     Label1: TLabel;
     Button1: TButton;
@@ -19,7 +19,7 @@ type
   end;
 
 var
-  Form5: TForm5;
+  MainForm: TMainForm;
 
 implementation
 

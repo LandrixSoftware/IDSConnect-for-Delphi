@@ -1,9 +1,9 @@
 ﻿<Project xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
     <PropertyGroup>
         <ProjectGuid>{A50E068D-D822-4E13-B8D7-F6AEA8B0DAE1}</ProjectGuid>
-        <ProjectVersion>19.1</ProjectVersion>
+        <ProjectVersion>19.2</ProjectVersion>
         <FrameworkType>VCL</FrameworkType>
-        <MainSource>SHKIDSConnect.dpr</MainSource>
+        <MainSource>IDSConnect.dpr</MainSource>
         <Base>True</Base>
         <Config Condition="'$(Config)'==''">Debug</Config>
         <Platform Condition="'$(Platform)'==''">Win64</Platform>
@@ -69,7 +69,7 @@
         <Icon_MainIcon>$(BDS)\bin\delphi_PROJECTICON.ico</Icon_MainIcon>
         <UWP_DelphiLogo44>$(BDS)\bin\Artwork\Windows\UWP\delphi_UwpDefault_44.png</UWP_DelphiLogo44>
         <UWP_DelphiLogo150>$(BDS)\bin\Artwork\Windows\UWP\delphi_UwpDefault_150.png</UWP_DelphiLogo150>
-        <SanitizedProjectName>SHKIDSConnect</SanitizedProjectName>
+        <SanitizedProjectName>IDSConnect</SanitizedProjectName>
         <DCC_UnitSearchPath>..\;$(DCC_UnitSearchPath)</DCC_UnitSearchPath>
         <VerInfo_Locale>1031</VerInfo_Locale>
         <VerInfo_Keys>CompanyName=;FileDescription=$(MSBuildProjectName);FileVersion=1.0.0.0;InternalName=;LegalCopyright=;LegalTrademarks=;OriginalFilename=;ProgramID=com.embarcadero.$(MSBuildProjectName);ProductName=$(MSBuildProjectName);ProductVersion=1.0.0.0;Comments=</VerInfo_Keys>
@@ -109,6 +109,8 @@
     <PropertyGroup Condition="'$(Cfg_1_Win64)'!=''">
         <AppEnableRuntimeThemes>true</AppEnableRuntimeThemes>
         <AppDPIAwarenessMode>PerMonitorV2</AppDPIAwarenessMode>
+        <VerInfo_IncludeVerInfo>true</VerInfo_IncludeVerInfo>
+        <VerInfo_Locale>1033</VerInfo_Locale>
     </PropertyGroup>
     <PropertyGroup Condition="'$(Cfg_2)'!=''">
         <DCC_LocalDebugSymbols>false</DCC_LocalDebugSymbols>
@@ -128,8 +130,8 @@
         <DelphiCompile Include="$(MainSource)">
             <MainSource>MainSource</MainSource>
         </DelphiCompile>
-        <DCCReference Include="SHKIDSConnectUnit1.pas">
-            <Form>Form5</Form>
+        <DCCReference Include="IDSConnectUnit1.pas">
+            <Form>MainForm</Form>
             <FormType>dfm</FormType>
         </DCCReference>
         <BuildConfiguration Include="Release">
@@ -150,17 +152,44 @@
         <BorlandProject>
             <Delphi.Personality>
                 <Source>
-                    <Source Name="MainSource">SHKIDSConnect.dpr</Source>
+                    <Source Name="MainSource">IDSConnect.dpr</Source>
                 </Source>
                 <Excluded_Packages>
+                    <Excluded_Packages Name="C:\Program Files (x86)\RemObjects Software\Everwood\Bin\RemObjects_Everwood_D27.bpl">Datei C:\Program Files (x86)\RemObjects Software\Everwood\Bin\RemObjects_Everwood_D27.bpl nicht gefunden</Excluded_Packages>
+                    <Excluded_Packages Name="C:\Program Files (x86)\RemObjects Software\RemObjects SDK for Delphi\Dcu\D27\Win32\RemObjects_Core_D27.bpl">Datei C:\Program Files (x86)\RemObjects Software\RemObjects SDK for Delphi\Dcu\D27\Win32\RemObjects_Core_D27.bpl nicht gefunden</Excluded_Packages>
+                    <Excluded_Packages Name="C:\Program Files (x86)\RemObjects Software\RemObjects SDK for Delphi\Dcu\D27\Win32\RemObjects_DataSnap_D27.bpl">Datei C:\Program Files (x86)\RemObjects Software\RemObjects SDK for Delphi\Dcu\D27\Win32\RemObjects_DataSnap_D27.bpl nicht gefunden</Excluded_Packages>
+                    <Excluded_Packages Name="C:\Program Files (x86)\RemObjects Software\RemObjects SDK for Delphi\Dcu\D27\Win32\RemObjects_FMX_D27.bpl">Datei C:\Program Files (x86)\RemObjects Software\RemObjects SDK for Delphi\Dcu\D27\Win32\RemObjects_FMX_D27.bpl nicht gefunden</Excluded_Packages>
+                    <Excluded_Packages Name="C:\Program Files (x86)\RemObjects Software\RemObjects SDK for Delphi\Dcu\D27\Win32\RemObjects_Server_D27.bpl">Datei C:\Program Files (x86)\RemObjects Software\RemObjects SDK for Delphi\Dcu\D27\Win32\RemObjects_Server_D27.bpl nicht gefunden</Excluded_Packages>
+                    <Excluded_Packages Name="C:\Program Files (x86)\RemObjects Software\RemObjects SDK for Delphi\Dcu\D27\Win32\RemObjects_Server_DataSnap_D27.bpl">Datei C:\Program Files (x86)\RemObjects Software\RemObjects SDK for Delphi\Dcu\D27\Win32\RemObjects_Server_DataSnap_D27.bpl nicht gefunden</Excluded_Packages>
+                    <Excluded_Packages Name="C:\Program Files (x86)\RemObjects Software\RemObjects SDK for Delphi\Dcu\D27\Win32\RemObjects_Server_Synapse_D27.bpl">Datei C:\Program Files (x86)\RemObjects Software\RemObjects SDK for Delphi\Dcu\D27\Win32\RemObjects_Server_Synapse_D27.bpl nicht gefunden</Excluded_Packages>
+                    <Excluded_Packages Name="C:\Program Files (x86)\RemObjects Software\RemObjects SDK for Delphi\Dcu\D27\Win32\RemObjects_Synapse_D27.bpl">Datei C:\Program Files (x86)\RemObjects Software\RemObjects SDK for Delphi\Dcu\D27\Win32\RemObjects_Synapse_D27.bpl nicht gefunden</Excluded_Packages>
+                    <Excluded_Packages Name="C:\Program Files (x86)\RemObjects Software\RemObjects SDK for Delphi\Dcu\D27\Win32\RemObjects_VCL_D27.bpl">Datei C:\Program Files (x86)\RemObjects Software\RemObjects SDK for Delphi\Dcu\D27\Win32\RemObjects_VCL_D27.bpl nicht gefunden</Excluded_Packages>
+                    <Excluded_Packages Name="C:\Program Files (x86)\RemObjects Software\RemObjects SDK for Delphi\Dcu\D27\Win32\RemObjects_IDE_D27.bpl">Datei C:\Program Files (x86)\RemObjects Software\RemObjects SDK for Delphi\Dcu\D27\Win32\RemObjects_IDE_D27.bpl nicht gefunden</Excluded_Packages>
+                    <Excluded_Packages Name="C:\Program Files (x86)\RemObjects Software\RemObjects SDK for Delphi\Dcu\D27\Win32\RemObjects_Indy_D27.bpl">Datei C:\Program Files (x86)\RemObjects Software\RemObjects SDK for Delphi\Dcu\D27\Win32\RemObjects_Indy_D27.bpl nicht gefunden</Excluded_Packages>
+                    <Excluded_Packages Name="C:\Program Files (x86)\RemObjects Software\RemObjects SDK for Delphi\Dcu\D27\Win32\RemObjects_Server_IDE_D27.bpl">Datei C:\Program Files (x86)\RemObjects Software\RemObjects SDK for Delphi\Dcu\D27\Win32\RemObjects_Server_IDE_D27.bpl nicht gefunden</Excluded_Packages>
+                    <Excluded_Packages Name="C:\Program Files (x86)\RemObjects Software\RemObjects SDK for Delphi\Dcu\D27\Win32\RemObjects_Server_Indy_D27.bpl">Datei C:\Program Files (x86)\RemObjects Software\RemObjects SDK for Delphi\Dcu\D27\Win32\RemObjects_Server_Indy_D27.bpl nicht gefunden</Excluded_Packages>
+                    <Excluded_Packages Name="C:\Program Files (x86)\RemObjects Software\RemObjects SDK for Delphi\Dcu\D27\Win32\RemObjects_Server_VCL_D27.bpl">Datei C:\Program Files (x86)\RemObjects Software\RemObjects SDK for Delphi\Dcu\D27\Win32\RemObjects_Server_VCL_D27.bpl nicht gefunden</Excluded_Packages>
+                    <Excluded_Packages Name="C:\Program Files (x86)\RemObjects Software\RemObjects SDK for Delphi\Dcu\D27\Win32\RemObjects_WebBroker_D27.bpl">Datei C:\Program Files (x86)\RemObjects Software\RemObjects SDK for Delphi\Dcu\D27\Win32\RemObjects_WebBroker_D27.bpl nicht gefunden</Excluded_Packages>
                     <Excluded_Packages Name="$(BDSBIN)\dcloffice2k270.bpl">Microsoft Office 2000 Beispiele für gekapselte Komponenten für Automatisierungsserver</Excluded_Packages>
                     <Excluded_Packages Name="$(BDSBIN)\dclofficexp270.bpl">Microsoft Office XP Beispiele für gekapselte Komponenten für Automation Server</Excluded_Packages>
                 </Excluded_Packages>
             </Delphi.Personality>
             <Deployment Version="3">
-                <DeployFile LocalName="Win32\Debug\SHKIDSConnect.exe" Configuration="Debug" Class="ProjectOutput">
+                <DeployFile LocalName="Win32\Debug\IDSConnect.exe" Configuration="Debug" Class="ProjectOutput">
                     <Platform Name="Win32">
-                        <RemoteName>SHKIDSConnect.exe</RemoteName>
+                        <RemoteName>IDSConnect.exe</RemoteName>
+                        <Overwrite>true</Overwrite>
+                    </Platform>
+                </DeployFile>
+                <DeployFile LocalName="Win64\Debug\IDSConnect.exe" Configuration="Debug" Class="ProjectOutput">
+                    <Platform Name="Win64">
+                        <RemoteName>IDSConnect.exe</RemoteName>
+                        <Overwrite>true</Overwrite>
+                    </Platform>
+                </DeployFile>
+                <DeployFile LocalName="Win64\Debug\IDSConnect.rsm" Configuration="Debug" Class="DebugSymbols">
+                    <Platform Name="Win64">
+                        <RemoteName>IDSConnect.rsm</RemoteName>
                         <Overwrite>true</Overwrite>
                     </Platform>
                 </DeployFile>
@@ -301,6 +330,16 @@
                     </Platform>
                     <Platform Name="Android64">
                         <RemoteDir>res\drawable-xxhdpi</RemoteDir>
+                        <Operation>1</Operation>
+                    </Platform>
+                </DeployClass>
+                <DeployClass Name="Android_LauncherIcon192">
+                    <Platform Name="Android">
+                        <RemoteDir>res\drawable-xxxhdpi</RemoteDir>
+                        <Operation>1</Operation>
+                    </Platform>
+                    <Platform Name="Android64">
+                        <RemoteDir>res\drawable-xxxhdpi</RemoteDir>
                         <Operation>1</Operation>
                     </Platform>
                 </DeployClass>

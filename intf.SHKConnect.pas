@@ -1,7 +1,6 @@
-unit intf.SHKIDSConnect;
-
 {
-License
+License IDSConnect-for-Delphi
+
 Copyright (C) 2020 Landrix Software GmbH & Co. KG
 Sven Harazim, info@landrix.de
 
@@ -18,6 +17,8 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with this program.  If not, see <https://www.gnu.org/licenses/>.
 }
+
+unit intf.SHKConnect;
 
 interface
 

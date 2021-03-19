@@ -10,7 +10,7 @@ Weitere Informationen unter https://www.itek.de/beratung/ids-connect
 
 english version below
 
-Die Bibliothek "IDSConnect-for-Delphi" unterliegt eine Doppellizenz. Sie können Sie kostenlos und
+Die Bibliothek "IDSConnect-for-Delphi" unterliegt eine Doppellizenz. Sie können sie kostenlos und
  ohne Einschränkungen unter der [GPL v3.0](https://www.gnu.org/licenses/gpl-3.0.en.html) verwenden, oder Sie erwerben
 eine Lizenz zur kommerziellen Nutzung unter der [Landrix Software Commercial License](commercial.license.md)
 
