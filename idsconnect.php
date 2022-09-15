@@ -1,7 +1,7 @@
 <?
 /*
 License
-Copyright (C) 2020 Landrix Software GmbH & Co. KG
+Copyright (C) 2022 Landrix Software GmbH & Co. KG
 Sven Harazim, info@landrix.de
 
 This program is free software: you can redistribute it and/or modify
@@ -27,7 +27,7 @@ along with this program.  If not, see <https://www.gnu.org/licenses/>.
   if (isset($_REQUEST["warenkorb"]))
   {
     $fp = fopen("idsconnect/".$_REQUEST["sid"], "w");
-    fputs($fp, ( get_magic_quotes_gpc() ) ? stripslashes($_REQUEST["warenkorb"]) : $_REQUEST["warenkorb"]);
+    fputs($fp, $_REQUEST["warenkorb"]);
     fclose($fp);
 ?>
 <html>

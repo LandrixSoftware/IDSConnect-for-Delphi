@@ -29,6 +29,7 @@
 Samples/intf.SHKConnect.inc
 Samples/Win32
 Samples/Win64
+Documentation
 
 # Delphi compiler-generated binaries (safe to delete)
 *.exe
