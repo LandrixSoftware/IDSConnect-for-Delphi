@@ -22,18 +22,17 @@ interface
 uses
   System.SysUtils,System.Classes,System.Contnrs,System.DateUtils
   ,System.StrUtils,System.Types,System.Generics.Collections
-  ,Xml.XMLIntf, Xml.XMLDoc, Xml.xmldom
   ;
 
 //Die Bezeichnungen der Klassen wurden an die XSD-Datei der Schnittstellenbeschreibung
 //angelehnt, sind also eine Mischung aus Englisch und Deutsch
 type
-  TIDSConnect_Version = (idsConnectVersion_2_5);
+  TIDSConnect_Version = (idsConnectVersion_Unkown,idsConnectVersion_2_5);
 
   //Rueckgabekennzeichen, pflicht bei Warenkorbempfang
   TIDSConnect_RueckgabeKZ = (idsConnectRKZ_None,
-                             idsConnectRKZ_Warenkorbrueckgabe,              //value="Warenkorbrückgabe"
-                             idsConnectRKZ_WarenkorbrueckgabeMitBestellung);//value="Warenkorbrückgabe mit Bestellung"
+                             idsConnectRKZ_Warenkorbrueckgabe,              //value="Warenkorbrueckgabe"
+                             idsConnectRKZ_WarenkorbrueckgabeMitBestellung);//value="Warenkorbrueckgabe mit Bestellung"
 
   //Informationen zum Warenkorb
   TIDSConnect_WarenkorbInfo = class(TObject)
@@ -183,6 +182,7 @@ type
                         idsConnectTc_Yes, //value="Yes"
                         idsConnectTc_No); //value="No"
 
+
   //Warenkorbposition
   TIDSConnect_OrderItem = class(TObject)
   public
@@ -228,6 +228,7 @@ type
     CustomerInfo : TIDSConnect_CustomerInfo;
     DeliveryPlaceInfo : TIDSConnect_DeliveryPlaceInfo;
     OrderItems : TIDSConnect_OrderItemList; //0 bis x
+  public
     constructor Create;
     destructor Destroy; override;
     procedure Clear;
@@ -237,170 +238,13 @@ type
   public
     WarenkorbInfo : TIDSConnect_WarenkorbInfo;
     Order : TIDSConnect_Order;
-  end;
-
-  TIDSConnectHelper = class(TObject)
   public
-    class function RohstoffStrToRohstoff(const _Val: String): TIDSConnect_Rohstoff;
-    class function RohstoffToRohstoffStr(const _Val: TIDSConnect_Rohstoff): String;
-    class function StrToFloat(_Val: String; _Default: double): double;
-    class function QuToQuStrInternal(const _Val: TIDSConnect_QU): String;
-    class function QuToQuStr(const _Val: TIDSConnect_QU): String;
-    class function QuStrToQu(const _Val: String): TIDSConnect_QU;
+    constructor Create;
+    destructor Destroy; override;
+    procedure Clear;
   end;
 
 implementation
-
-const
-  TIDSConnect_XMLNameSpace = 'http://www.itek.de/Shop-Anbindung/Warenkorb/';
-  TIDSConnect_XMLSchemaLocationSendShoppingCart = 'http://www.itek.de/Shop-Anbindung/Warenkorb/warenkorb_senden_2_5.xsd';
-  TIDSConnect_XMLSchemaLocationReceiveShoppingCart = 'http://www.itek.de/Shop-Anbindung/Warenkorb/warenkorb_empfangen_2_5.xsd';
-
-{ TIDSConnectHelper }
-
-class function TIDSConnectHelper.RohstoffStrToRohstoff(const _Val: String): TIDSConnect_Rohstoff;
-begin
-  if SameText('AL',_Val) then
-    Result := TIDSConnect_Rohstoff.idsConnectR_AL else
-  if SameText('PB',_Val) then
-    Result := TIDSConnect_Rohstoff.idsConnectR_PB else
-  if SameText('CR',_Val) then
-    Result := TIDSConnect_Rohstoff.idsConnectR_CR else
-  if SameText('AU',_Val) then
-    Result := TIDSConnect_Rohstoff.idsConnectR_AU else
-  if SameText('CD',_Val) then
-    Result := TIDSConnect_Rohstoff.idsConnectR_CD else
-  if SameText('CU',_Val) then
-    Result := TIDSConnect_Rohstoff.idsConnectR_CU else
-  if SameText('MG',_Val) then
-    Result := TIDSConnect_Rohstoff.idsConnectR_MG else
-  if SameText('NI',_Val) then
-    Result := TIDSConnect_Rohstoff.idsConnectR_NI else
-  if SameText('PL',_Val) then
-    Result := TIDSConnect_Rohstoff.idsConnectR_PL else
-  if SameText('AG',_Val) then
-    Result := TIDSConnect_Rohstoff.idsConnectR_AG else
-  if SameText('W',_Val) then
-    Result := TIDSConnect_Rohstoff.idsConnectR_W else
-  if SameText('ZN',_Val) then
-    Result := TIDSConnect_Rohstoff.idsConnectR_ZN else
-  if SameText('SN',_Val) then
-    Result := TIDSConnect_Rohstoff.idsConnectR_SN else
-    Result := TIDSConnect_Rohstoff.idsConnectR_CU;
-end;
-
-class function TIDSConnectHelper.RohstoffToRohstoffStr(const _Val: TIDSConnect_Rohstoff): String;
-begin
-  Result := '';
-  case _Val of
-    TIDSConnect_Rohstoff.idsConnectR_AL : Result := 'AL';
-    TIDSConnect_Rohstoff.idsConnectR_PB : Result := 'PB';
-    TIDSConnect_Rohstoff.idsConnectR_CR : Result := 'CR';
-    TIDSConnect_Rohstoff.idsConnectR_AU : Result := 'AU';
-    TIDSConnect_Rohstoff.idsConnectR_CD : Result := 'CD';
-    TIDSConnect_Rohstoff.idsConnectR_CU : Result := 'CU';
-    TIDSConnect_Rohstoff.idsConnectR_MG : Result := 'MG';
-    TIDSConnect_Rohstoff.idsConnectR_NI : Result := 'NI';
-    TIDSConnect_Rohstoff.idsConnectR_PL : Result := 'PL';
-    TIDSConnect_Rohstoff.idsConnectR_AG : Result := 'AG';
-    TIDSConnect_Rohstoff.idsConnectR_W  : Result := 'W';
-    TIDSConnect_Rohstoff.idsConnectR_ZN : Result := 'ZN';
-    TIDSConnect_Rohstoff.idsConnectR_SN : Result := 'SN';
-  end;
-end;
-
-class function TIDSConnectHelper.StrToFloat(_Val: String; _Default: double): double;
-begin
-  _Val := ReplaceText(_Val,'.',',');
-  Result := StrToFloatDef(_Val,_Default);
-end;
-
-class function TIDSConnectHelper.QuToQuStrInternal(const _Val: TIDSConnect_QU): String;
-begin
-  Result := '';
-  case _Val of
-    TIDSConnect_QU.idsConnectQu_CMQ : Result := 'ccm';         // Kubik-Zentimeter
-    TIDSConnect_QU.idsConnectQu_CMK : Result := 'qcm';        // Quadrat-Zentimeter
-    TIDSConnect_QU.idsConnectQu_CMT : Result := 'cm';        // Zentimeter
-    TIDSConnect_QU.idsConnectQu_DZN : Result := 'dtzd';        // Dutzend
-    TIDSConnect_QU.idsConnectQu_GRM : Result := 'g';        // Gramm
-    TIDSConnect_QU.idsConnectQu_HLT : Result := 'hl';        // Hekto-Liter
-    TIDSConnect_QU.idsConnectQu_KGM : Result := 'kg';        // Kilogramm
-    TIDSConnect_QU.idsConnectQu_KTM : Result := 'km';        // Kilometer
-    TIDSConnect_QU.idsConnectQu_LTR : Result := 'l';        // Liter
-    TIDSConnect_QU.idsConnectQu_MMT : Result := 'mm';        // Millimeter
-    TIDSConnect_QU.idsConnectQu_MTK : Result := 'm²';        // Quadrat-Meter
-    TIDSConnect_QU.idsConnectQu_MTQ : Result := 'm³';        // Kubik-Meter
-    TIDSConnect_QU.idsConnectQu_MTR : Result := 'm';        // Meter
-    TIDSConnect_QU.idsConnectQu_PCE : Result := 'Stck';        // Stueck
-    TIDSConnect_QU.idsConnectQu_PR  : Result := 'Paar' ;        // Paar
-    TIDSConnect_QU.idsConnectQu_SET : Result := 'Set';        // Satz
-    TIDSConnect_QU.idsConnectQu_TNE : Result := 't';        // Tonne
-  end;
-end;
-
-class function TIDSConnectHelper.QuToQuStr(const _Val: TIDSConnect_QU): String;
-begin
-  Result := '';
-  case _Val of
-    TIDSConnect_QU.idsConnectQu_CMQ : Result := 'CMQ';
-    TIDSConnect_QU.idsConnectQu_CMK : Result := 'CMK';
-    TIDSConnect_QU.idsConnectQu_CMT : Result := 'CMT';
-    TIDSConnect_QU.idsConnectQu_DZN : Result := 'DZN';
-    TIDSConnect_QU.idsConnectQu_GRM : Result := 'GRM';
-    TIDSConnect_QU.idsConnectQu_HLT : Result := 'HLT';
-    TIDSConnect_QU.idsConnectQu_KGM : Result := 'KGM';
-    TIDSConnect_QU.idsConnectQu_KTM : Result := 'KTM';
-    TIDSConnect_QU.idsConnectQu_LTR : Result := 'LTR';
-    TIDSConnect_QU.idsConnectQu_MMT : Result := 'MMT';
-    TIDSConnect_QU.idsConnectQu_MTK : Result := 'MTK';
-    TIDSConnect_QU.idsConnectQu_MTQ : Result := 'MTQ';
-    TIDSConnect_QU.idsConnectQu_MTR : Result := 'MTR';
-    TIDSConnect_QU.idsConnectQu_PCE : Result := 'PCE';
-    TIDSConnect_QU.idsConnectQu_PR  : Result := 'PR' ;
-    TIDSConnect_QU.idsConnectQu_SET : Result := 'SET';
-    TIDSConnect_QU.idsConnectQu_TNE : Result := 'TNE';
-  end;
-end;
-
-class function TIDSConnectHelper.QuStrToQu(const _Val: String): TIDSConnect_QU;
-begin
-  if SameText('CMQ',_Val) then
-    Result := TIDSConnect_QU.idsConnectQu_CMQ else
-  if SameText('CMK',_Val) then
-    Result := TIDSConnect_QU.idsConnectQu_CMK else
-  if SameText('CMT',_Val) then
-    Result := TIDSConnect_QU.idsConnectQu_CMT else
-  if SameText('DZN',_Val) then
-    Result := TIDSConnect_QU.idsConnectQu_DZN else
-  if SameText('GRM',_Val) then
-    Result := TIDSConnect_QU.idsConnectQu_GRM else
-  if SameText('HLT',_Val) then
-    Result := TIDSConnect_QU.idsConnectQu_HLT else
-  if SameText('KGM',_Val) then
-    Result := TIDSConnect_QU.idsConnectQu_KGM else
-  if SameText('KTM',_Val) then
-    Result := TIDSConnect_QU.idsConnectQu_KTM else
-  if SameText('LTR',_Val) then
-    Result := TIDSConnect_QU.idsConnectQu_LTR else
-  if SameText('MMT',_Val) then
-    Result := TIDSConnect_QU.idsConnectQu_MMT else
-  if SameText('MTK',_Val) then
-    Result := TIDSConnect_QU.idsConnectQu_MTK else
-  if SameText('MTQ',_Val) then
-    Result := TIDSConnect_QU.idsConnectQu_MTQ else
-  if SameText('MTR',_Val) then
-    Result := TIDSConnect_QU.idsConnectQu_MTR else
-  if SameText('PCE',_Val) then
-    Result := TIDSConnect_QU.idsConnectQu_PCE else
-  if SameText('PR',_Val) then
-    Result := TIDSConnect_QU.idsConnectQu_PR else
-  if SameText('SET',_Val) then
-    Result := TIDSConnect_QU.idsConnectQu_SET else
-  if SameText('TNE',_Val) then
-    Result := TIDSConnect_QU.idsConnectQu_TNE else
-    Result := TIDSConnect_QU.idsConnectQu_PCE;
-end;
 
 { TIDSConnect_WarenkorbInfo }
 
@@ -628,6 +472,27 @@ begin
   CustomerInfo.Clear;
   DeliveryPlaceInfo.Clear;
   OrderItems.Clear;
+end;
+
+{ TIDSConnect_Warenkorb }
+
+procedure TIDSConnect_Warenkorb.Clear;
+begin
+  WarenkorbInfo.Clear;
+  Order.Clear;
+end;
+
+constructor TIDSConnect_Warenkorb.Create;
+begin
+  WarenkorbInfo := TIDSConnect_WarenkorbInfo.Create;
+  Order := TIDSConnect_Order.Create;
+end;
+
+destructor TIDSConnect_Warenkorb.Destroy;
+begin
+  if Assigned(WarenkorbInfo) then begin WarenkorbInfo.Free; WarenkorbInfo := nil; end;
+  if Assigned(Order) then begin Order.Free; Order := nil; end;
+  inherited;
 end;
 
 end.

@@ -6,9 +6,10 @@
         <MainSource>IDSConnect.dpr</MainSource>
         <Base>True</Base>
         <Config Condition="'$(Config)'==''">Debug</Config>
-        <Platform Condition="'$(Platform)'==''">Win64</Platform>
+        <Platform Condition="'$(Platform)'==''">Win32</Platform>
         <TargetedPlatforms>3</TargetedPlatforms>
         <AppType>Application</AppType>
+        <ProjectName Condition="'$(ProjectName)'==''">IDSConnect</ProjectName>
     </PropertyGroup>
     <PropertyGroup Condition="'$(Config)'=='Base' or '$(Base)'!=''">
         <Base>true</Base>
@@ -93,21 +94,17 @@
     </PropertyGroup>
     <PropertyGroup Condition="'$(Cfg_1)'!=''">
         <DCC_Define>DEBUG;$(DCC_Define)</DCC_Define>
-        <DCC_DebugDCUs>true</DCC_DebugDCUs>
         <DCC_Optimize>false</DCC_Optimize>
-        <DCC_GenerateStackFrames>true</DCC_GenerateStackFrames>
         <DCC_DebugInfoInExe>true</DCC_DebugInfoInExe>
         <DCC_RemoteDebug>true</DCC_RemoteDebug>
     </PropertyGroup>
     <PropertyGroup Condition="'$(Cfg_1_Win32)'!=''">
         <DCC_RemoteDebug>false</DCC_RemoteDebug>
-        <AppEnableRuntimeThemes>true</AppEnableRuntimeThemes>
         <AppDPIAwarenessMode>PerMonitorV2</AppDPIAwarenessMode>
         <VerInfo_IncludeVerInfo>true</VerInfo_IncludeVerInfo>
         <VerInfo_Locale>1033</VerInfo_Locale>
     </PropertyGroup>
     <PropertyGroup Condition="'$(Cfg_1_Win64)'!=''">
-        <AppEnableRuntimeThemes>true</AppEnableRuntimeThemes>
         <AppDPIAwarenessMode>PerMonitorV2</AppDPIAwarenessMode>
         <VerInfo_IncludeVerInfo>true</VerInfo_IncludeVerInfo>
         <VerInfo_Locale>1033</VerInfo_Locale>
@@ -155,23 +152,8 @@
                     <Source Name="MainSource">IDSConnect.dpr</Source>
                 </Source>
                 <Excluded_Packages>
-                    <Excluded_Packages Name="C:\Program Files (x86)\RemObjects Software\Everwood\Bin\RemObjects_Everwood_D27.bpl">Datei C:\Program Files (x86)\RemObjects Software\Everwood\Bin\RemObjects_Everwood_D27.bpl nicht gefunden</Excluded_Packages>
-                    <Excluded_Packages Name="C:\Program Files (x86)\RemObjects Software\RemObjects SDK for Delphi\Dcu\D27\Win32\RemObjects_Core_D27.bpl">Datei C:\Program Files (x86)\RemObjects Software\RemObjects SDK for Delphi\Dcu\D27\Win32\RemObjects_Core_D27.bpl nicht gefunden</Excluded_Packages>
-                    <Excluded_Packages Name="C:\Program Files (x86)\RemObjects Software\RemObjects SDK for Delphi\Dcu\D27\Win32\RemObjects_DataSnap_D27.bpl">Datei C:\Program Files (x86)\RemObjects Software\RemObjects SDK for Delphi\Dcu\D27\Win32\RemObjects_DataSnap_D27.bpl nicht gefunden</Excluded_Packages>
-                    <Excluded_Packages Name="C:\Program Files (x86)\RemObjects Software\RemObjects SDK for Delphi\Dcu\D27\Win32\RemObjects_FMX_D27.bpl">Datei C:\Program Files (x86)\RemObjects Software\RemObjects SDK for Delphi\Dcu\D27\Win32\RemObjects_FMX_D27.bpl nicht gefunden</Excluded_Packages>
-                    <Excluded_Packages Name="C:\Program Files (x86)\RemObjects Software\RemObjects SDK for Delphi\Dcu\D27\Win32\RemObjects_Server_D27.bpl">Datei C:\Program Files (x86)\RemObjects Software\RemObjects SDK for Delphi\Dcu\D27\Win32\RemObjects_Server_D27.bpl nicht gefunden</Excluded_Packages>
-                    <Excluded_Packages Name="C:\Program Files (x86)\RemObjects Software\RemObjects SDK for Delphi\Dcu\D27\Win32\RemObjects_Server_DataSnap_D27.bpl">Datei C:\Program Files (x86)\RemObjects Software\RemObjects SDK for Delphi\Dcu\D27\Win32\RemObjects_Server_DataSnap_D27.bpl nicht gefunden</Excluded_Packages>
-                    <Excluded_Packages Name="C:\Program Files (x86)\RemObjects Software\RemObjects SDK for Delphi\Dcu\D27\Win32\RemObjects_Server_Synapse_D27.bpl">Datei C:\Program Files (x86)\RemObjects Software\RemObjects SDK for Delphi\Dcu\D27\Win32\RemObjects_Server_Synapse_D27.bpl nicht gefunden</Excluded_Packages>
-                    <Excluded_Packages Name="C:\Program Files (x86)\RemObjects Software\RemObjects SDK for Delphi\Dcu\D27\Win32\RemObjects_Synapse_D27.bpl">Datei C:\Program Files (x86)\RemObjects Software\RemObjects SDK for Delphi\Dcu\D27\Win32\RemObjects_Synapse_D27.bpl nicht gefunden</Excluded_Packages>
-                    <Excluded_Packages Name="C:\Program Files (x86)\RemObjects Software\RemObjects SDK for Delphi\Dcu\D27\Win32\RemObjects_VCL_D27.bpl">Datei C:\Program Files (x86)\RemObjects Software\RemObjects SDK for Delphi\Dcu\D27\Win32\RemObjects_VCL_D27.bpl nicht gefunden</Excluded_Packages>
-                    <Excluded_Packages Name="C:\Program Files (x86)\RemObjects Software\RemObjects SDK for Delphi\Dcu\D27\Win32\RemObjects_IDE_D27.bpl">Datei C:\Program Files (x86)\RemObjects Software\RemObjects SDK for Delphi\Dcu\D27\Win32\RemObjects_IDE_D27.bpl nicht gefunden</Excluded_Packages>
-                    <Excluded_Packages Name="C:\Program Files (x86)\RemObjects Software\RemObjects SDK for Delphi\Dcu\D27\Win32\RemObjects_Indy_D27.bpl">Datei C:\Program Files (x86)\RemObjects Software\RemObjects SDK for Delphi\Dcu\D27\Win32\RemObjects_Indy_D27.bpl nicht gefunden</Excluded_Packages>
-                    <Excluded_Packages Name="C:\Program Files (x86)\RemObjects Software\RemObjects SDK for Delphi\Dcu\D27\Win32\RemObjects_Server_IDE_D27.bpl">Datei C:\Program Files (x86)\RemObjects Software\RemObjects SDK for Delphi\Dcu\D27\Win32\RemObjects_Server_IDE_D27.bpl nicht gefunden</Excluded_Packages>
-                    <Excluded_Packages Name="C:\Program Files (x86)\RemObjects Software\RemObjects SDK for Delphi\Dcu\D27\Win32\RemObjects_Server_Indy_D27.bpl">Datei C:\Program Files (x86)\RemObjects Software\RemObjects SDK for Delphi\Dcu\D27\Win32\RemObjects_Server_Indy_D27.bpl nicht gefunden</Excluded_Packages>
-                    <Excluded_Packages Name="C:\Program Files (x86)\RemObjects Software\RemObjects SDK for Delphi\Dcu\D27\Win32\RemObjects_Server_VCL_D27.bpl">Datei C:\Program Files (x86)\RemObjects Software\RemObjects SDK for Delphi\Dcu\D27\Win32\RemObjects_Server_VCL_D27.bpl nicht gefunden</Excluded_Packages>
-                    <Excluded_Packages Name="C:\Program Files (x86)\RemObjects Software\RemObjects SDK for Delphi\Dcu\D27\Win32\RemObjects_WebBroker_D27.bpl">Datei C:\Program Files (x86)\RemObjects Software\RemObjects SDK for Delphi\Dcu\D27\Win32\RemObjects_WebBroker_D27.bpl nicht gefunden</Excluded_Packages>
-                    <Excluded_Packages Name="$(BDSBIN)\dcloffice2k270.bpl">Microsoft Office 2000 Beispiele für gekapselte Komponenten für Automatisierungsserver</Excluded_Packages>
-                    <Excluded_Packages Name="$(BDSBIN)\dclofficexp270.bpl">Microsoft Office XP Beispiele für gekapselte Komponenten für Automation Server</Excluded_Packages>
+                    <Excluded_Packages Name="$(BDSBIN)\dcloffice2k290.bpl">Microsoft Office 2000 Beispiele für gekapselte Komponenten für Automatisierungsserver</Excluded_Packages>
+                    <Excluded_Packages Name="$(BDSBIN)\dclofficexp290.bpl">Microsoft Office XP Beispiele für gekapselte Komponenten für Automation Server</Excluded_Packages>
                 </Excluded_Packages>
             </Delphi.Personality>
             <Deployment Version="4">
@@ -838,6 +820,9 @@
                     <Platform Name="Win64">
                         <Operation>1</Operation>
                     </Platform>
+                    <Platform Name="Win64x">
+                        <Operation>1</Operation>
+                    </Platform>
                 </DeployClass>
                 <DeployClass Name="ProjectiOSDeviceDebug">
                     <Platform Name="iOSDevice32">
@@ -1131,6 +1116,7 @@
                 <ProjectRoot Platform="OSXARM64" Name="$(PROJECTNAME).app"/>
                 <ProjectRoot Platform="Win32" Name="$(PROJECTNAME)"/>
                 <ProjectRoot Platform="Win64" Name="$(PROJECTNAME)"/>
+                <ProjectRoot Platform="Win64x" Name="$(PROJECTNAME)"/>
             </Deployment>
             <Platforms>
                 <Platform value="Win32">True</Platform>
