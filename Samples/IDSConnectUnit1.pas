@@ -36,15 +36,30 @@ type
     procedure Button6Click(Sender: TObject);
   private
     //Aufbau der Ini-Datei mit Lieferanten
+    //
     //[Settings]
     //HookUrl=https://<eigener-server>/idsconnect.php
+    //                     Eigene Ruecksprungadresse, ueber die der Shop den
+    //                     Warenkorb zurueckuebertraegt. Pflicht fuer WKE, WKS
+    //                     und AS. Ein passendes Skript liegt als
+    //                     idsconnect.php bei.
     //
-    //[Name Lieferant]
-    //Username=...
-    //Password=...
-    //Customernumber=...
+    //[Name Lieferant]     Der Abschnittsname erscheint in der Anbieterliste
+    //Username=...         Benutzername beim Grosshaendler
+    //Password=...         Passwort beim Grosshaendler
+    //Customernumber=...   Kundennummer beim Grosshaendler
+    //                     Welche der drei Angaben noetig sind, verraet die
+    //                     Abfrage "LI" (Schalter "Shop-Infos")
     //IDSConnectUrl=https://...
-    //...
+    //                     Einstiegsadresse der IDS-Schnittstelle des Shops
+    //DemoArticle=...      optional; Artikelnummer, die beim Auswaehlen des
+    //                     Anbieters in das Feld Artikelnummer uebernommen wird
+    //MultipleResult=1     optional; der Shop beherrscht die Mehrfachrueckgabe
+    //                     an die HookUrl (ab IDS 2.5.1). Das laesst sich nicht
+    //                     abfragen - der Parameter ist eine Zusage der
+    //                     Handwerkssoftware an den Shop - und muss deshalb je
+    //                     Anbieter einmal ausprobiert und hier hinterlegt
+    //                     werden.
 
     cfg : TMemIniFile;
     function ConfigFilename : String;
@@ -377,14 +392,19 @@ begin
   begin
     ListBox1.Clear;
     Memo1.Lines.Text := 'Die Datei '+ConfigFilename+' wurde nicht gefunden.'+sLineBreak+sLineBreak+
-                        'Aufbau:'+sLineBreak+
+                        'Aufbau:'+sLineBreak+sLineBreak+
                         '['+CFG_SETTINGS+']'+sLineBreak+
                         'HookUrl=https://<eigener-server>/idsconnect.php'+sLineBreak+sLineBreak+
                         '[Name Lieferant]'+sLineBreak+
                         'Username=...'+sLineBreak+
                         'Password=...'+sLineBreak+
                         'Customernumber=...'+sLineBreak+
-                        'IDSConnectUrl=https://...';
+                        'IDSConnectUrl=https://...'+sLineBreak+
+                        'DemoArticle=...        ; optional, füllt das Feld Artikelnummer'+sLineBreak+
+                        'MultipleResult=1       ; optional, Shop beherrscht die Mehrfachrückgabe'+sLineBreak+sLineBreak+
+                        'Die HookUrl ist die eigene Rücksprungadresse, über die der Shop'+sLineBreak+
+                        'den Warenkorb zurückschickt. Ein passendes Serverskript liegt'+sLineBreak+
+                        'dem Projekt als idsconnect.php bei.';
     //Damit die Buttons trotzdem definiert arbeiten koennen
     cfg := TMemIniFile.Create(ConfigFilename);
     exit;
