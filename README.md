@@ -15,6 +15,27 @@ Weitere Informationen unter https://www.itek.de/beratung/ids-connect
 | Warenkorb empfangen | WKE | `TIDSConnect.IDSConnectWKE` |
 | Artikeldeeplink | ADL | `TIDSConnect.IDSConnectADT` |
 | Artikelsuche | AS | `TIDSConnect.IDSConnectAS` |
+| Logininformationen | LI | `TIDSConnect.IDSConnectLI` |
+| Schnittstellenversion | SV | `TIDSConnect.IDSConnectSV` |
+
+`LI` und `SV` laufen als direkter POST ohne Browser und ohne Hook-URL:
+
+```pascal
+//Welche Anmeldedaten braucht der Shop?
+var lLogin : TIDSConnect_LoginInfo;
+if TIDSConnect.IDSConnectLI(URL,lLogin) then
+  if lLogin.PasswordRequired then ...
+
+//Welche Version sprechen wir?
+case TIDSConnect.IDSConnectSVBestVersion(URL) of
+  idsConnectVersion_2_5_1 : lWarenkorb.WarenkorbInfo.Version := idsConnectVersion_2_5_1;
+  idsConnectVersion_2_5   : lWarenkorb.WarenkorbInfo.Version := idsConnectVersion_2_5;
+end;
+```
+
+Antwortet der Shop nicht, liefert `IDSConnectLI` `False` und lässt alle drei
+Angaben auf „erforderlich"; `IDSConnectSVBestVersion` liefert dann
+`idsConnectVersion_Unkown`.
 
 ## Version 2.5 oder 2.5.1
 
@@ -61,7 +82,22 @@ ersten Rückgabe. Der Dialog zeigt laufend die Anzahl der übernommenen Rückgab
 beendet wird der Vorgang über „Fertig" oder durch Ablauf der Frist.
 
 `hookURLTimeout` bemisst sich dabei — wie in der Spezifikation vorgesehen — ab
-der **letzten** Übertragung: nach jeder Rückgabe beginnt die Frist von vorn.
+der **letzten** Übertragung.
+
+**Ob ein Shop die Mehrfachrückgabe beherrscht, lässt sich nicht abfragen.** Der
+Parameter ist eine Zusage der Handwerkssoftware an den Shop („ich kann mehrere
+Rückgaben verarbeiten"), keine Anfrage; die Spezifikation kennt dafür weder in
+`SV` noch in `LI` ein Merkmal. Praktisch bleibt nur, es je Großhändler einmal
+auszuprobieren und zu hinterlegen — im Beispielprojekt über den Schlüssel
+`MultipleResult` in der `configuration.ini`.
+
+Damit ein Shop, der nur einmal sendet, den Dialog nicht die volle Frist
+offenhält, wird nach der ersten Rückgabe nur noch kurz auf weitere gewartet:
+
+```pascal
+//Sekunden; 0 = immer die volle Frist abwarten
+TIDSConnect.IDSCONNECT_MULTIPLERESULT_FOLLOWUP := 30;
+```
 
 Wer den Ablauf selbst steuern will, kann die Rückgaben mit
 `TIDSConnect.MergeOrderItems(_Quelle,_Ziel)` zusammenführen — nötig, weil
@@ -170,7 +206,12 @@ Username=...
 Password=...
 Customernumber=...
 IDSConnectUrl=https://...
+DemoArticle=...        ;optional, füllt das Feld Artikelnummer
+MultipleResult=1       ;optional, Shop beherrscht die Mehrfachrückgabe
 ```
+
+Der Schalter „Shop-Infos (SV / LI)" fragt beim ausgewählten Anbieter die
+unterstützten Schnittstellenversionen und die benötigten Anmeldedaten ab.
 
 Die Datei enthält Zugangsdaten und ist deshalb von der Versionsverwaltung
 ausgenommen.

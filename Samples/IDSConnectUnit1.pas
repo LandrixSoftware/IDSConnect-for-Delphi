@@ -24,6 +24,7 @@ type
     Label3: TLabel;
     Memo1: TMemo;
     CheckBox1: TCheckBox;
+    Button6: TButton;
     procedure FormCreate(Sender: TObject);
     procedure FormDestroy(Sender: TObject);
     procedure Button1Click(Sender: TObject);
@@ -32,6 +33,7 @@ type
     procedure Button3Click(Sender: TObject);
     procedure Button5Click(Sender: TObject);
     procedure Button4Click(Sender: TObject);
+    procedure Button6Click(Sender: TObject);
   private
     //Aufbau der Ini-Datei mit Lieferanten
     //[Settings]
@@ -52,6 +54,9 @@ type
     function PrepareHookUrl : Boolean;
     function SelectedSection : String;
     function TempHtmlFilename : String;
+    //Ob der Shop die Mehrfachrueckgabe beherrscht, ist nicht abfragbar und
+    //wird deshalb je Anbieter in der configuration.ini hinterlegt
+    function UseMultipleResult : Boolean;
     procedure ShowWarenkorb(_Warenkorb : TIDSConnect_Warenkorb);
     procedure HandleIDSError(const _Message : String; _E : Exception);
   end;
@@ -84,6 +89,11 @@ begin
   //Sie gehoert deshalb nicht neben die EXE (dort schlaegt das Schreiben unter
   //C:\Program Files ausserdem fehl), sondern in das Benutzer-Temp-Verzeichnis.
   Result := TPath.Combine(TPath.GetTempPath,'idsconnect.html');
+end;
+
+function TMainForm.UseMultipleResult: Boolean;
+begin
+  Result := cfg.ReadBool(SelectedSection,'MultipleResult',false);
 end;
 
 function TMainForm.SelectedSection: String;
@@ -149,6 +159,60 @@ begin
   lDemoArticle := cfg.ReadString(SelectedSection,'DemoArticle','');
   if lDemoArticle <> '' then
     Edit1.Text := lDemoArticle;
+end;
+
+procedure TMainForm.Button6Click(Sender: TObject);
+var
+  lUrl : String;
+  lLogin : TIDSConnect_LoginInfo;
+  lVersions : TStringList;
+begin
+  Memo1.Clear;
+  if SelectedSection = '' then
+    exit;
+  lUrl := cfg.ReadString(SelectedSection,'IDSConnectUrl','');
+  if lUrl = '' then
+    exit;
+
+  Screen.Cursor := crHourGlass;
+  try
+    Memo1.Lines.Add('Abfrage an '+lUrl);
+    Memo1.Lines.Add('');
+
+    //Aktion "SV": welche Schnittstellenversionen kann der Shop?
+    lVersions := TStringList.Create;
+    try
+      if TIDSConnect.IDSConnectSV(lUrl,lVersions) then
+      begin
+        Memo1.Lines.Add('Unterstützte Versionen: '+lVersions.CommaText);
+        Memo1.Lines.Add('Höchste gemeinsame Version: '+
+          TIDSConnectHelper.VersionToStr(TIDSConnect.IDSConnectSVBestVersion(lUrl)));
+      end else
+        Memo1.Lines.Add('Versionsabfrage (SV) nicht beantwortet.');
+    finally
+      lVersions.Free;
+    end;
+
+    //Aktion "LI": welche Anmeldedaten braucht der Shop?
+    if TIDSConnect.IDSConnectLI(lUrl,lLogin) then
+    begin
+      Memo1.Lines.Add('');
+      Memo1.Lines.Add('Kundennummer erforderlich: '+BoolToStr(lLogin.CustomerNoRequired,true));
+      Memo1.Lines.Add('Benutzername erforderlich: '+BoolToStr(lLogin.UsernameRequired,true));
+      Memo1.Lines.Add('Passwort erforderlich:     '+BoolToStr(lLogin.PasswordRequired,true));
+    end else
+      Memo1.Lines.Add('Loginabfrage (LI) nicht beantwortet.');
+
+    //Die Mehrfachrueckgabe laesst sich nicht abfragen - sie ist eine Zusage
+    //der Handwerkssoftware an den Shop. Deshalb wird sie je Anbieter in der
+    //configuration.ini hinterlegt.
+    Memo1.Lines.Add('');
+    Memo1.Lines.Add('Mehrfachrückgabe laut configuration.ini: '+
+                    BoolToStr(UseMultipleResult,true)+
+                    '  (Schlüssel MultipleResult, nicht abfragbar)');
+  finally
+    Screen.Cursor := crDefault;
+  end;
 end;
 
 procedure TMainForm.Button2Click(Sender: TObject);
@@ -288,10 +352,10 @@ begin
               TempHtmlFilename,
               Edit2.Text,
               lWarenkorb,
-              //ab IDS 2.5.1: Mehrfachrueckgabe erlauben, damit nacheinander
-              //mehrere Artikel uebernommen werden koennen. Die Hook-URL
-              //bleibt jeweils 300 Sekunden nach der letzten Rueckgabe aktiv.
-              true,300) then
+              //ab IDS 2.5.1: Mehrfachrueckgabe nur, wenn der Anbieter sie laut
+              //configuration.ini beherrscht. Die Hook-URL bleibt jeweils
+              //300 Sekunden nach der letzten Rueckgabe aktiv.
+              UseMultipleResult,300) then
     begin
       Memo1.Lines.Add('Es wurde kein Suchergebnis übernommen.');
       exit;

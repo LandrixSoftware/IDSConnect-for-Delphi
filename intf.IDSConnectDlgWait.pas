@@ -1,4 +1,4 @@
-{* Licensed to the Apache Software Foundation (ASF) under one
+﻿{* Licensed to the Apache Software Foundation (ASF) under one
  * or more contributor license agreements.  See the NOTICE file
  * distributed with this work for additional information
  * regarding copyright ownership.  The ASF licenses this file
@@ -54,6 +54,7 @@ type
     FCaptionBase : String;
     FReceived : Integer;
     FBaseText : String;
+    FFollowUpSec : Integer;
     procedure DoTimer(Sender : TObject);
     procedure DoCancel(Sender : TObject);
     procedure UpdateCaption;
@@ -66,9 +67,14 @@ type
     //Liefert true, wenn mindestens eine Rueckgabe uebernommen wurde - auch
     //dann, wenn der Anwender anschliessend abgebrochen hat oder die Frist
     //abgelaufen ist.
+    //_FollowUpSec bestimmt, wie lange nach einer eingetroffenen Rueckgabe noch
+    //auf weitere gewartet wird. Viele Shops kennen die Mehrfachrueckgabe
+    //nicht - ohne diese Verkuerzung stuende der Dialog nach der einzigen
+    //Rueckgabe die volle Frist offen. 0 = die volle Frist verwenden.
     class function Execute(const _Caption,_Text : String; _TimeoutSec : Integer;
                            _OnPoll : TIDSConnectPollEvent;
-                           _IntervalMS : Integer = 2000) : Boolean;
+                           _IntervalMS : Integer = 2000;
+                           _FollowUpSec : Integer = 0) : Boolean;
   end;
 
 implementation
@@ -164,8 +170,16 @@ begin
         end;
       idsPollReceived:
         begin
-          //Weitere Rueckgaben moeglich: die Frist beginnt von vorn
+          //Weitere Rueckgaben moeglich: die Frist beginnt von vorn.
+          //Nach der ersten Rueckgabe wird nur noch die - in der Regel deutlich
+          //kuerzere - Nachlauffrist gewartet.
           Inc(FReceived);
+          if FFollowUpSec > 0 then
+          begin
+            FTimeoutSec := FFollowUpSec;
+            FDeadline := IncSecond(Now,FFollowUpSec);
+            FProgress.Style := pbstNormal;
+          end else
           if FTimeoutSec > 0 then
             FDeadline := IncSecond(Now,FTimeoutSec);
         end;
@@ -189,7 +203,7 @@ end;
 
 class function TIDSConnectDlgWait.Execute(const _Caption, _Text: String;
   _TimeoutSec: Integer; _OnPoll: TIDSConnectPollEvent;
-  _IntervalMS: Integer): Boolean;
+  _IntervalMS: Integer; _FollowUpSec : Integer): Boolean;
 var
   lDlg : TIDSConnectDlgWait;
 begin
@@ -207,6 +221,7 @@ begin
     lDlg.FBaseText := _Text;
     lDlg.FOnPoll := _OnPoll;
     lDlg.FTimeoutSec := _TimeoutSec;
+    lDlg.FFollowUpSec := _FollowUpSec;
     if _TimeoutSec > 0 then
       lDlg.FDeadline := IncSecond(Now,_TimeoutSec)
     else

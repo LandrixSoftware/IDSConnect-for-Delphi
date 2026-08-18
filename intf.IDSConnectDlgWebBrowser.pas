@@ -1,4 +1,4 @@
-unit intf.IDSConnectDlgWebBrowser;
+﻿unit intf.IDSConnectDlgWebBrowser;
 
 interface
 

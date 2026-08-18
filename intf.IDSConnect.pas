@@ -1,4 +1,4 @@
-{* Licensed to the Apache Software Foundation (ASF) under one
+﻿{* Licensed to the Apache Software Foundation (ASF) under one
  * or more contributor license agreements.  See the NOTICE file
  * distributed with this work for additional information
  * regarding copyright ownership.  The ASF licenses this file
@@ -45,6 +45,13 @@ type
     //Anwender abbricht. Fuer die Artikelsuche gibt es ab IDS 2.5.1 den
     //eigenen Parameter hookURLTimeout an IDSConnectAS.
     IDSCONNECT_HOOKURL_TIMEOUT : Integer;
+    //Nur bei Mehrfachrueckgabe: wie lange (in Sekunden) nach einer
+    //eingetroffenen Rueckgabe noch auf weitere gewartet wird. Ob ein Shop die
+    //Mehrfachrueckgabe ueberhaupt beherrscht, laesst sich nicht abfragen -
+    //ohne diese Verkuerzung stuende der Warte-Dialog bei Shops, die genau
+    //einmal senden, bis zum Ablauf von hookURLTimeout offen.
+    //0 = immer die volle Frist abwarten.
+    IDSCONNECT_MULTIPLERESULT_FOLLOWUP : Integer;
   private type
     TValidateCertificatHelper = class(TObject)
       procedure DoValidateCertificateEvent(const Sender: TObject;
@@ -63,6 +70,10 @@ type
     //Basisadresse der Hook-URL ohne Query - daran erkennt der integrierte
     //Browser, dass die Rueck-Kommunikation abgeschlossen ist
     class function HookUrlBase : String;
+    //Direkter POST einer Aktion ohne Browser; fuer die Abfragen LI und SV
+    class function PostAction(const _ServiceURL,_Action : String; out _Response : String) : Boolean;
+    //Wurzelknoten der Antwort einer Abfrage; nil bei Fehler
+    class function ParseResponse(const _Response,_RootName : String; out _Doc : IXMLDocument) : IXMLNode;
     //Wartet mit Fortschrittsdialog, bis die Rueckuebertragung eingetroffen
     //ist, der Anwender abbricht oder das Timeout ablaeuft.
     class function WaitForResult(const _Url : String;_Warenkorb : TIDSConnect_Warenkorb;
@@ -82,6 +93,16 @@ type
     //der Mehrfachrueckgabe (multipleResult, ab IDS 2.5.1) gebraucht und steht
     //auch fuer eine eigene Ablaufsteuerung zur Verfuegung.
     class procedure MergeOrderItems(_From,_To : TIDSConnect_Warenkorb);
+
+    //Aktion "LI": fragt ab, welche Anmeldedaten das Shop-System benoetigt.
+    //Laeuft als direkter POST, ohne Browser und ohne Hook-URL.
+    class function IDSConnectLI(const _ServiceURL : String; out _LoginInfo : TIDSConnect_LoginInfo) : Boolean;
+    //Aktion "SV": fragt die vom Shop unterstuetzten Schnittstellenversionen ab.
+    //_Versions erhaelt die Angaben in der Reihenfolge der Antwort.
+    class function IDSConnectSV(const _ServiceURL : String; _Versions : TStrings) : Boolean;
+    //Liefert die hoechste Version, die sowohl der Shop als auch diese Unit
+    //beherrscht - oder idsConnectVersion_Unkown, wenn die Abfrage scheitert.
+    class function IDSConnectSVBestVersion(const _ServiceURL : String) : TIDSConnect_Version;
     class procedure IDSConnectADT(const _ServiceURL,_Cst,_UN,_Pwd,_ArtNr,_TmpFilename : String);
     class function  IDSConnectWKE(const _ServiceURL,_Cst,_UN,_Pwd,_TmpFilename : String;_Warenkorb : TIDSConnect_Warenkorb) : Boolean;
     class function  IDSConnectWKS(_ServiceURL,_Cst,_UN,_Pwd,_TmpFilename : String;_Warenkorb : TIDSConnect_Warenkorb;_DontWait : Boolean = false) : Boolean;
@@ -1617,6 +1638,156 @@ begin
     Result := Result+'?sid='+_Sid;
 end;
 
+class function TIDSConnect.PostAction(const _ServiceURL, _Action: String;
+  out _Response: String): Boolean;
+var
+  http : THTTPClient;
+  vcHelper : TIDSConnect.TValidateCertificatHelper;
+  data : TMultipartFormData;
+  res : IHTTPResponse;
+begin
+  Result := false;
+  _Response := '';
+  if _ServiceURL = '' then
+    exit;
+
+  http := THTTPClient.Create;
+  vcHelper := TIDSConnect.TValidateCertificatHelper.Create;
+  //Die Doku schreibt fuer die Formulardaten multipart/form-data vor
+  data := TMultipartFormData.Create;
+  try
+    if TIDSConnect.IDSCONNECT_ALLOW_INVALID_CERT then
+      http.OnValidateServerCertificate := vcHelper.DoValidateCertificateEvent;
+    http.ConnectionTimeout := 15000;
+    http.ResponseTimeout := 30000;
+
+    data.AddField('action',_Action);
+    data.AddField('version',TIDSConnect_CurrentVersionStr);
+    try
+      res := http.Post(_ServiceURL,data);
+      if res.StatusCode <> 200 then
+      begin
+        ReportError(Format('Die Abfrage "%s" wurde mit HTTP %d beantwortet.',[_Action,res.StatusCode]),nil);
+        exit;
+      end;
+      _Response := res.ContentAsString;
+      Result := _Response <> '';
+    except
+      on E:Exception do
+        ReportError(Format('Die Abfrage "%s" ist fehlgeschlagen: %s',[_Action,E.Message]),E);
+    end;
+  finally
+    data.Free;
+    vcHelper.Free;
+    http.Free;
+  end;
+end;
+
+class function TIDSConnect.ParseResponse(const _Response, _RootName: String;
+  out _Doc: IXMLDocument): IXMLNode;
+begin
+  Result := nil;
+  _Doc := TXMLDocument.Create(nil);
+  try
+    _Doc.LoadFromXML(_Response);
+    if _Doc.DocumentElement = nil then
+      exit;
+    if not SameText(_Doc.DocumentElement.NodeName,_RootName) then
+    begin
+      ReportError(Format('Unerwartete Antwort: <%s> statt <%s>.',
+                  [_Doc.DocumentElement.NodeName,_RootName]),nil);
+      exit;
+    end;
+    Result := _Doc.DocumentElement;
+  except
+    on E:Exception do
+      ReportError('Die Antwort konnte nicht gelesen werden: '+E.Message,E);
+  end;
+end;
+
+class function TIDSConnect.IDSConnectLI(const _ServiceURL: String;
+  out _LoginInfo: TIDSConnect_LoginInfo): Boolean;
+var
+  lResponse : String;
+  lDoc : IXMLDocument;
+  lRoot,lNode : IXMLNode;
+
+  function NodeIsTrue(const _Name : String; _Default : Boolean) : Boolean;
+  begin
+    Result := _Default;
+    lNode := lRoot.ChildNodes.FindNode(_Name);
+    if lNode <> nil then
+      Result := SameText(Trim(lNode.Text),'true') or (Trim(lNode.Text) = '1');
+  end;
+
+begin
+  _LoginInfo.Clear;
+  Result := false;
+  if not PostAction(_ServiceURL,'LI',lResponse) then
+    exit;
+
+  lRoot := ParseResponse(lResponse,'Logininformationen',lDoc);
+  if lRoot = nil then
+    exit;
+
+  //Fehlt eine Angabe, bleibt es bei "erforderlich" aus Clear
+  _LoginInfo.CustomerNoRequired := NodeIsTrue('Kundennummer_erforderlich',true);
+  _LoginInfo.UsernameRequired   := NodeIsTrue('Benutzername_erforderlich',true);
+  _LoginInfo.PasswordRequired   := NodeIsTrue('Passwort_erforderlich',true);
+  Result := true;
+end;
+
+class function TIDSConnect.IDSConnectSV(const _ServiceURL: String;
+  _Versions: TStrings): Boolean;
+var
+  lResponse : String;
+  lDoc : IXMLDocument;
+  lRoot : IXMLNode;
+  i : Integer;
+begin
+  Result := false;
+  if _Versions = nil then
+    exit;
+  _Versions.Clear;
+  if not PostAction(_ServiceURL,'SV',lResponse) then
+    exit;
+
+  lRoot := ParseResponse(lResponse,'Schnittstellenversionen',lDoc);
+  if lRoot = nil then
+    exit;
+
+  for i := 0 to lRoot.ChildNodes.Count-1 do
+    if SameText(lRoot.ChildNodes[i].NodeName,'Version') then
+      _Versions.Add(Trim(lRoot.ChildNodes[i].Text));
+  Result := true;
+end;
+
+class function TIDSConnect.IDSConnectSVBestVersion(
+  const _ServiceURL: String): TIDSConnect_Version;
+var
+  lVersions : TStringList;
+  i : Integer;
+  lVer : TIDSConnect_Version;
+begin
+  Result := idsConnectVersion_Unkown;
+  lVersions := TStringList.Create;
+  try
+    if not IDSConnectSV(_ServiceURL,lVersions) then
+      exit;
+    //Hinweis: Die Beispielantwort der Spezifikation listet nur 1.3 bis 2.3
+    //auf; Shops, die 2.5 oder 2.5.1 koennen, melden das entsprechend.
+    //Unbekannte Angaben werden uebergangen.
+    for i := 0 to lVersions.Count-1 do
+    begin
+      lVer := TIDSConnectHelper.VersionFromStr(lVersions[i]);
+      if (lVer <> idsConnectVersion_Unkown) and (lVer > Result) then
+        Result := lVer;
+    end;
+  finally
+    lVersions.Free;
+  end;
+end;
+
 class function TIDSConnect.HookUrlBase: String;
 var
   p : Integer;
@@ -1776,7 +1947,13 @@ begin
                     lReported := true;
                     ReportError('Der Abruf von '+_Url+' ist fehlgeschlagen: '+lError,nil);
                   end;
-                end);
+                end,
+                2000,
+                //Nach der ersten Rueckgabe nur noch kurz auf weitere warten.
+                //Shops, die die Mehrfachrueckgabe nicht kennen, senden genau
+                //einmal - ohne diese Verkuerzung stuende der Dialog danach die
+                //volle Frist offen.
+                IDSCONNECT_MULTIPLERESULT_FOLLOWUP);
   finally
     lBuffer.Free;
   end;
@@ -2073,5 +2250,9 @@ begin
   //Pruefung des Betriebssystems.
   Accepted := true;
 end;
+
+initialization
+  //Voreinstellung: nach einer Rueckgabe noch 30 Sekunden auf weitere warten
+  TIDSConnect.IDSCONNECT_MULTIPLERESULT_FOLLOWUP := 30;
 
 end.

@@ -51,6 +51,15 @@ object MainForm: TMainForm
     TabOrder = 1
     OnClick = Button1Click
   end
+  object Button6: TButton
+    Left = 159
+    Top = 862
+    Width = 145
+    Height = 25
+    Caption = 'Shop-Infos (SV / LI)'
+    TabOrder = 10
+    OnClick = Button6Click
+  end
   object Button2: TButton
     Left = 462
     Top = 51

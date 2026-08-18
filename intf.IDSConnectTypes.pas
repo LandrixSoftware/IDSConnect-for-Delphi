@@ -1,4 +1,4 @@
-{* Licensed to the Apache Software Foundation (ASF) under one
+﻿{* Licensed to the Apache Software Foundation (ASF) under one
  * or more contributor license agreements.  See the NOTICE file
  * distributed with this work for additional information
  * regarding copyright ownership.  The ASF licenses this file
@@ -53,6 +53,15 @@ type
   //Lieferung / Abholung
   TIDSConnect_ModeOfShipment = (idsConnectMos_Lieferung, //value="Lieferung"
                                 idsConnectMos_Abholung); //value="Abholung"
+
+  //Antwort auf die Aktion "LI" (Logininformationen): welche Anmeldedaten das
+  //Shop-System benoetigt
+  TIDSConnect_LoginInfo = record
+    CustomerNoRequired : Boolean; //Kundennummer_erforderlich
+    UsernameRequired : Boolean;   //Benutzername_erforderlich
+    PasswordRequired : Boolean;   //Passwort_erforderlich
+    procedure Clear;
+  end;
 
   //Belegart, ab IDS 2.5.1 - Codeliste tgCodelisteReferenzType
   TIDSConnect_ReferenzType = (idsConnectRefType_None,
@@ -308,6 +317,17 @@ type
   end;
 
 implementation
+
+{ TIDSConnect_LoginInfo }
+
+procedure TIDSConnect_LoginInfo.Clear;
+begin
+  //Ohne Antwort des Shops wird angenommen, dass alle drei Angaben noetig
+  //sind - das ist die Voreinstellung der bisherigen Aufrufe
+  CustomerNoRequired := true;
+  UsernameRequired := true;
+  PasswordRequired := true;
+end;
 
 { TIDSConnect_WarenkorbInfo }
 
