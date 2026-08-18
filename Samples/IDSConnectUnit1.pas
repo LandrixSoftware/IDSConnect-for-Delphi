@@ -4,9 +4,10 @@ interface
 
 uses
   Winapi.Windows, Winapi.Messages, System.SysUtils, System.Variants,
-  System.Classes, Vcl.Graphics,Vcl.Controls, Vcl.Forms,
-  Vcl.Dialogs, Vcl.StdCtrls, System.Inifiles
-  ,intf.IDSConnectTypes,intf.IDSConnect;
+  System.Classes, Vcl.Graphics,Vcl.Controls, Vcl.Forms, System.UITypes,
+  Vcl.Dialogs, Vcl.StdCtrls, System.Inifiles, System.StrUtils, System.IOUtils,
+  System.DateUtils
+  ,intf.IDSConnectTypes,intf.IDSConnect,intf.IDSConnectDlgWebBrowser;
 
 type
   TMainForm = class(TForm)
@@ -22,14 +23,19 @@ type
     Label2: TLabel;
     Label3: TLabel;
     Memo1: TMemo;
+    CheckBox1: TCheckBox;
     procedure FormCreate(Sender: TObject);
     procedure FormDestroy(Sender: TObject);
+    procedure Button1Click(Sender: TObject);
     procedure Button2Click(Sender: TObject);
     procedure Button3Click(Sender: TObject);
     procedure Button5Click(Sender: TObject);
     procedure Button4Click(Sender: TObject);
   private
     //Aufbau der Ini-Datei mit Lieferanten
+    //[Settings]
+    //HookUrl=https://<eigener-server>/idsconnect.php
+    //
     //[Name Lieferant]
     //Username=...
     //Password=...
@@ -38,6 +44,15 @@ type
     //...
 
     cfg : TMemIniFile;
+    function ConfigFilename : String;
+    procedure LoadConfig;
+    //Die Hook-URL muss auf einen eigenen Server zeigen; ueber sie laufen
+    //Warenkorb-, Preis- und Kundendaten zurueck zur Handwerkssoftware.
+    function PrepareHookUrl : Boolean;
+    function SelectedSection : String;
+    function TempHtmlFilename : String;
+    procedure ShowWarenkorb(_Warenkorb : TIDSConnect_Warenkorb);
+    procedure HandleIDSError(const _Message : String; _E : Exception);
   end;
 
 var
@@ -47,25 +62,102 @@ implementation
 
 {$R *.dfm}
 
+const
+  //Sektion mit allgemeinen Einstellungen; sie taucht nicht in der
+  //Anbieterliste auf
+  CFG_SETTINGS = 'Settings';
+
+function TMainForm.ConfigFilename: String;
+begin
+  Result := ExtractFilePath(ExtractFileDir(ExtractFileDir(Application.ExeName)))+'configuration.ini';
+end;
+
+function TMainForm.TempHtmlFilename: String;
+begin
+  //Die Datei enthaelt Kundennummer, Benutzername und Passwort im Klartext.
+  //Sie gehoert deshalb nicht neben die EXE (dort schlaegt das Schreiben unter
+  //C:\Program Files ausserdem fehl), sondern in das Benutzer-Temp-Verzeichnis.
+  Result := TPath.Combine(TPath.GetTempPath,'idsconnect.html');
+end;
+
+function TMainForm.SelectedSection: String;
+begin
+  Result := '';
+  if ListBox1.ItemIndex < 0 then
+    exit;
+  Result := ListBox1.Items[ListBox1.ItemIndex];
+end;
+
+function TMainForm.PrepareHookUrl: Boolean;
+begin
+  //Frueher stand hier fest die Adresse von landrix.de - wer den Hinweis
+  //uebersah, hat seine Warenkoerbe an einen fremden Server geschickt.
+  TIDSConnect.IDSCONNECT_HOOKURL := cfg.ReadString(CFG_SETTINGS,'HookUrl','');
+  Result := TIDSConnect.IDSCONNECT_HOOKURL <> '';
+  if not Result then
+    MessageDlg('In der configuration.ini fehlt die eigene Rücksprungadresse:'+sLineBreak+sLineBreak+
+               '['+CFG_SETTINGS+']'+sLineBreak+
+               'HookUrl=https://<eigener-server>/idsconnect.php'+sLineBreak+sLineBreak+
+               'Über diese Adresse werden Warenkorb- und Preisdaten zurückübertragen.',
+               mtWarning,[mbOk],0);
+end;
+
+procedure TMainForm.ShowWarenkorb(_Warenkorb: TIDSConnect_Warenkorb);
+var
+  i : Integer;
+begin
+  Memo1.Clear;
+  if _Warenkorb.Order.OrderItems.Count = 0 then
+  begin
+    Memo1.Lines.Add('Der empfangene Warenkorb enthält keine Positionen.');
+    exit;
+  end;
+  for i := 0 to _Warenkorb.Order.OrderItems.Count-1 do
+    Memo1.Lines.Add(_Warenkorb.Order.OrderItems[i].ArtNo+' '+
+                    Format('%.2f',[_Warenkorb.Order.OrderItems[i].Qty])+' '+
+                    TIDSConnectHelper.QuToQuStrInternal(_Warenkorb.Order.OrderItems[i].QU)+' '+
+                    Format('%m',[_Warenkorb.Order.OrderItems[i].NetPrice])+' '+
+                    _Warenkorb.Order.OrderItems[i].Kurztext);
+end;
+
+procedure TMainForm.HandleIDSError(const _Message: String; _E: Exception);
+begin
+  //Ohne diesen Callback verschwinden Parser- und Netzwerkfehler stillschweigend
+  Memo1.Lines.Add('Fehler: '+_Message);
+end;
+
+procedure TMainForm.Button1Click(Sender: TObject);
+begin
+  //Der Button hatte bisher keinen Handler
+  LoadConfig;
+end;
+
 procedure TMainForm.Button2Click(Sender: TObject);
 var
   lWarenkorb : TIDSConnect_Warenkorb;
 begin
-  if ListBox1.ItemIndex < 0 then
+  Memo1.Clear;
+  if SelectedSection = '' then
     exit;
+  if not PrepareHookUrl then
+    exit;
+
   lWarenkorb := TIDSConnect_Warenkorb.Create;
   try
-    //URL unbedingt gegen eigene austauschen!
-    TIDSConnect.IDSCONNECT_HOOKURL := 'https://www.landrix.de/idsconnect.php';
-
     if not TIDSConnect.IDSConnectWKE(
-              cfg.ReadString(ListBox1.Items[ListBox1.ItemIndex],'IDSConnectUrl',''),
-              cfg.ReadString(ListBox1.Items[ListBox1.ItemIndex],'Customernumber',''),
-              cfg.ReadString(ListBox1.Items[ListBox1.ItemIndex],'Username',''),
-              cfg.ReadString(ListBox1.Items[ListBox1.ItemIndex],'Password',''),
-              ExtractFilePath(Application.ExeName)+'idsconnect.html',
+              cfg.ReadString(SelectedSection,'IDSConnectUrl',''),
+              cfg.ReadString(SelectedSection,'Customernumber',''),
+              cfg.ReadString(SelectedSection,'Username',''),
+              cfg.ReadString(SelectedSection,'Password',''),
+              TempHtmlFilename,
               lWarenkorb) then
+    begin
+      //Bisher wurde der empfangene Warenkorb kommentarlos verworfen
+      Memo1.Lines.Add('Es wurde kein Warenkorb empfangen.');
       exit;
+    end;
+
+    ShowWarenkorb(lWarenkorb);
   finally
     lWarenkorb.Free;
   end;
@@ -73,36 +165,54 @@ end;
 
 procedure TMainForm.Button3Click(Sender: TObject);
 begin
-  if ListBox1.ItemIndex < 0 then
+  if SelectedSection = '' then
     exit;
   TIDSConnect.IDSConnectADT(
-            cfg.ReadString(ListBox1.Items[ListBox1.ItemIndex],'IDSConnectUrl',''),
-            cfg.ReadString(ListBox1.Items[ListBox1.ItemIndex],'Customernumber',''),
-            cfg.ReadString(ListBox1.Items[ListBox1.ItemIndex],'Username',''),
-            cfg.ReadString(ListBox1.Items[ListBox1.ItemIndex],'Password',''),
+            cfg.ReadString(SelectedSection,'IDSConnectUrl',''),
+            cfg.ReadString(SelectedSection,'Customernumber',''),
+            cfg.ReadString(SelectedSection,'Username',''),
+            cfg.ReadString(SelectedSection,'Password',''),
             Edit1.Text,
-            ExtractFilePath(Application.ExeName)+'idsconnect.html');
+            //Leerer Dateiname bedeutet: im integrierten Browser anzeigen
+            ifthen(CheckBox1.Checked,'',TempHtmlFilename));
 end;
 
 procedure TMainForm.Button4Click(Sender: TObject);
 var
   lWarenkorb : TIDSConnect_Warenkorb;
-  i : Integer;
   lSendOnly : Boolean;
+  lAnswer : Integer;
 begin
   Memo1.Clear;
-  if ListBox1.ItemIndex < 0 then
+  if SelectedSection = '' then
+    exit;
+  if not PrepareHookUrl then
     exit;
 
-  lSendOnly := (MessageDlg('Warenkorb nur senden? (Bestellung)'+#13+#10+'Nein = empfangen zum Preise aktualisieren.', mtConfirmation, [mbYes, mbNo], 0) = mrYes);
+  //ESC lieferte hier frueher mrCancel, was als "Nein" durchging und den
+  //Warenkorb trotzdem abgeschickt hat
+  lAnswer := MessageDlg('Warenkorb nur senden? (Bestellung)'+sLineBreak+
+                        'Nein = empfangen zum Preise aktualisieren.',
+                        mtConfirmation, [mbYes, mbNo, mbCancel], 0);
+  if lAnswer = mrCancel then
+    exit;
+  lSendOnly := lAnswer = mrYes;
 
   lWarenkorb := TIDSConnect_Warenkorb.Create;
   try
-    //URL unbedingt gegen eigene austauschen!
-    TIDSConnect.IDSCONNECT_HOOKURL := 'https://www.landrix.de/idsconnect.php';
-
     lWarenkorb.WarenkorbInfo.Date := Date;
-    lWarenkorb.WarenkorbInfo.Time := now;
+    //Now enthaelt auch den Datumsanteil; das Feld ist ein TTime
+    lWarenkorb.WarenkorbInfo.Time := TimeOf(Now);
+    //Ab IDS 2.5.1 werden Belegnummern als Referenzen uebergeben
+    lWarenkorb.WarenkorbInfo.Version := idsConnectVersion_2_5_1;
+    with lWarenkorb.Order.OrderInfo.Referenzen.AddItem do
+    begin
+      ReferenzNumber := 'B-2024-0815';
+      ReferenzDate := Date;
+      ReferenzType := idsConnectRefType_220; //Bestellung
+    end;
+    lWarenkorb.Order.OrderInfo.Kommission := 'Bauvorhaben Müller & Sohn <Neubau>';
+
     with lWarenkorb.Order.OrderItems.AddItem do
     begin
       ItemChara := idsConnectIc_normal;
@@ -117,62 +227,106 @@ begin
     end;
 
     if not TIDSConnect.IDSConnectWKS(
-              cfg.ReadString(ListBox1.Items[ListBox1.ItemIndex],'IDSConnectUrl',''),
-              cfg.ReadString(ListBox1.Items[ListBox1.ItemIndex],'Customernumber',''),
-              cfg.ReadString(ListBox1.Items[ListBox1.ItemIndex],'Username',''),
-              cfg.ReadString(ListBox1.Items[ListBox1.ItemIndex],'Password',''),
-              ExtractFilePath(Application.ExeName)+'idsconnect.html',
+              cfg.ReadString(SelectedSection,'IDSConnectUrl',''),
+              cfg.ReadString(SelectedSection,'Customernumber',''),
+              cfg.ReadString(SelectedSection,'Username',''),
+              cfg.ReadString(SelectedSection,'Password',''),
+              TempHtmlFilename,
               lWarenkorb,lSendOnly) then
+    begin
+      Memo1.Lines.Add('Der Warenkorb konnte nicht übertragen werden.');
       exit;
+    end;
 
     if lSendOnly then
+    begin
+      Memo1.Lines.Add('Der Warenkorb wurde an den Shop übertragen.');
       exit;
+    end;
 
-    for i := 0 to lWarenkorb.Order.OrderItems.Count-1 do
-      Memo1.Lines.Add(lWarenkorb.Order.OrderItems[i].ArtNo+' '+Format('%m',[lWarenkorb.Order.OrderItems[i].NetPrice]));
+    ShowWarenkorb(lWarenkorb);
   finally
     lWarenkorb.Free;
   end;
-
 end;
 
 procedure TMainForm.Button5Click(Sender: TObject);
 var
   lWarenkorb : TIDSConnect_Warenkorb;
-  i : Integer;
 begin
   Memo1.Clear;
-  if ListBox1.ItemIndex < 0 then
+  if SelectedSection = '' then
     exit;
+  if not PrepareHookUrl then
+    exit;
+
   lWarenkorb := TIDSConnect_Warenkorb.Create;
   try
-    //URL unbedingt gegen eigene austauschen!
-    TIDSConnect.IDSCONNECT_HOOKURL := 'https://www.landrix.de/idsconnect.php';
-
     if not TIDSConnect.IDSConnectAS(
-              cfg.ReadString(ListBox1.Items[ListBox1.ItemIndex],'IDSConnectUrl',''),
-              cfg.ReadString(ListBox1.Items[ListBox1.ItemIndex],'Customernumber',''),
-              cfg.ReadString(ListBox1.Items[ListBox1.ItemIndex],'Username',''),
-              cfg.ReadString(ListBox1.Items[ListBox1.ItemIndex],'Password',''),
-              ExtractFilePath(Application.ExeName)+'idsconnect.html',
+              cfg.ReadString(SelectedSection,'IDSConnectUrl',''),
+              cfg.ReadString(SelectedSection,'Customernumber',''),
+              cfg.ReadString(SelectedSection,'Username',''),
+              cfg.ReadString(SelectedSection,'Password',''),
+              TempHtmlFilename,
               Edit2.Text,
-              lWarenkorb) then
+              lWarenkorb,
+              //ab IDS 2.5.1: keine Mehrfachrueckgabe, Hook-URL 300 Sekunden aktiv
+              false,300) then
+    begin
+      Memo1.Lines.Add('Es wurde kein Suchergebnis übernommen.');
       exit;
-    for i := 0 to lWarenkorb.Order.OrderItems.Count-1 do
-      Memo1.Lines.Add(lWarenkorb.Order.OrderItems[i].ArtNo+' '+lWarenkorb.Order.OrderItems[i].Kurztext);
+    end;
+
+    ShowWarenkorb(lWarenkorb);
   finally
     lWarenkorb.Free;
   end;
 end;
 
+procedure TMainForm.LoadConfig;
+var
+  i : Integer;
+begin
+  if Assigned(cfg) then begin cfg.Free; cfg := nil; end;
+
+  if not FileExists(ConfigFilename) then
+  begin
+    ListBox1.Clear;
+    Memo1.Lines.Text := 'Die Datei '+ConfigFilename+' wurde nicht gefunden.'+sLineBreak+sLineBreak+
+                        'Aufbau:'+sLineBreak+
+                        '['+CFG_SETTINGS+']'+sLineBreak+
+                        'HookUrl=https://<eigener-server>/idsconnect.php'+sLineBreak+sLineBreak+
+                        '[Name Lieferant]'+sLineBreak+
+                        'Username=...'+sLineBreak+
+                        'Password=...'+sLineBreak+
+                        'Customernumber=...'+sLineBreak+
+                        'IDSConnectUrl=https://...';
+    //Damit die Buttons trotzdem definiert arbeiten koennen
+    cfg := TMemIniFile.Create(ConfigFilename);
+    exit;
+  end;
+
+  cfg := TMemIniFile.Create(ConfigFilename);
+  cfg.ReadSections(ListBox1.Items);
+  //Die Einstellungs-Sektion ist kein Anbieter
+  for i := ListBox1.Items.Count-1 downto 0 do
+    if SameText(ListBox1.Items[i],CFG_SETTINGS) then
+      ListBox1.Items.Delete(i);
+
+  if ListBox1.Items.Count > 0 then
+    ListBox1.ItemIndex := 0;
+end;
+
 procedure TMainForm.FormCreate(Sender: TObject);
 begin
-  cfg := TMemIniFile.Create(ExtractFilePath(ExtractFileDir(ExtractFileDir(Application.ExeName)))+'configuration.ini');
-  cfg.ReadSections(ListBox1.Items);
+  Memo1.Clear;
+  TIDSConnect.IDSCONNECT_ONERROR := HandleIDSError;
+  LoadConfig;
 end;
 
 procedure TMainForm.FormDestroy(Sender: TObject);
 begin
+  TIDSConnect.IDSCONNECT_ONERROR := nil;
   if Assigned(cfg) then begin cfg.Free; cfg := nil; end;
 end;
 

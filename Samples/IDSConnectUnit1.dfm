@@ -1,7 +1,7 @@
 object MainForm: TMainForm
   Left = 0
   Top = 0
-  Caption = 'IDSConnect-Schnittstelle 2.5'
+  Caption = 'IDSConnect-Schnittstelle 2.5.1'
   ClientHeight = 895
   ClientWidth = 1279
   Color = clBtnFace
@@ -21,15 +21,15 @@ object MainForm: TMainForm
     Caption = 'Anbieter'
   end
   object Label2: TLabel
-    Left = 608
-    Top = 139
+    Left = 607
+    Top = 163
     Width = 43
     Height = 13
     Caption = 'Suchtext'
   end
   object Label3: TLabel
-    Left = 608
-    Top = 101
+    Left = 607
+    Top = 125
     Width = 68
     Height = 13
     Caption = 'Artikelnummer'
@@ -49,10 +49,11 @@ object MainForm: TMainForm
     Height = 25
     Caption = 'Anbieterliste aktualisieren'
     TabOrder = 1
+    OnClick = Button1Click
   end
   object Button2: TButton
-    Left = 463
-    Top = 27
+    Left = 462
+    Top = 51
     Width = 130
     Height = 25
     Caption = 'Warenkorb empfangen'
@@ -60,16 +61,16 @@ object MainForm: TMainForm
     OnClick = Button2Click
   end
   object Edit1: TEdit
-    Left = 688
-    Top = 98
+    Left = 687
+    Top = 122
     Width = 121
     Height = 21
     TabOrder = 3
     Text = 'AXPP2RM100200'
   end
   object Button3: TButton
-    Left = 463
-    Top = 96
+    Left = 462
+    Top = 120
     Width = 130
     Height = 25
     Caption = 'Artikel Deeplink'
@@ -77,8 +78,8 @@ object MainForm: TMainForm
     OnClick = Button3Click
   end
   object Button4: TButton
-    Left = 463
-    Top = 58
+    Left = 462
+    Top = 82
     Width = 130
     Height = 25
     Caption = 'Warenkorb senden'
@@ -86,8 +87,8 @@ object MainForm: TMainForm
     OnClick = Button4Click
   end
   object Button5: TButton
-    Left = 463
-    Top = 135
+    Left = 462
+    Top = 159
     Width = 130
     Height = 25
     Caption = 'Artikel suchen'
@@ -95,20 +96,27 @@ object MainForm: TMainForm
     OnClick = Button5Click
   end
   object Edit2: TEdit
-    Left = 688
-    Top = 136
+    Left = 687
+    Top = 160
     Width = 121
     Height = 21
     TabOrder = 7
     Text = 'Wanne'
   end
   object Memo1: TMemo
-    Left = 464
-    Top = 176
+    Left = 463
+    Top = 200
     Width = 345
     Height = 289
-    Lines.Strings = (
-      'Memo1')
+    ScrollBars = ssBoth
     TabOrder = 8
+  end
+  object CheckBox1: TCheckBox
+    Left = 463
+    Top = 28
+    Width = 187
+    Height = 17
+    Caption = 'Artikel-Deeplink im InApp-Browser'
+    TabOrder = 9
   end
 end
