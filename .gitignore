@@ -29,7 +29,13 @@
 Samples/intf.SHKConnect.inc
 Samples/Win32
 Samples/Win64
+Samples/configuration.ini
 Documentation
+Testdata
+
+GPATH
+GTAGS
+GRTAGS
 
 # Delphi compiler-generated binaries (safe to delete)
 *.exe
@@ -71,3 +77,8 @@ __recovery/
 *.stat
 
 Deprecated
+# Zugangsdaten und lokale Testdaten nicht einchecken
+Samples/configuration.ini
+configuration.ini
+Testdata/
+*.delphilsp.json
