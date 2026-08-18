@@ -40,6 +40,7 @@ object MainForm: TMainForm
     Height = 829
     ItemHeight = 13
     TabOrder = 0
+    OnClick = ListBox1Click
   end
   object Button1: TButton
     Left = 8
@@ -116,6 +117,8 @@ object MainForm: TMainForm
     Width = 187
     Height = 17
     Caption = 'InApp-Browser'
+    Checked = True
+    State = cbChecked
     TabOrder = 9
   end
 end

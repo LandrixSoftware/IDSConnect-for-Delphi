@@ -27,6 +27,7 @@ type
     procedure FormCreate(Sender: TObject);
     procedure FormDestroy(Sender: TObject);
     procedure Button1Click(Sender: TObject);
+    procedure ListBox1Click(Sender: TObject);
     procedure Button2Click(Sender: TObject);
     procedure Button3Click(Sender: TObject);
     procedure Button5Click(Sender: TObject);
@@ -135,6 +136,19 @@ procedure TMainForm.Button1Click(Sender: TObject);
 begin
   //Der Button hatte bisher keinen Handler
   LoadConfig;
+end;
+
+procedure TMainForm.ListBox1Click(Sender: TObject);
+var
+  lDemoArticle : String;
+begin
+  //Hat der Anbieter einen Demoartikel hinterlegt, wandert er in das Feld
+  //Artikelnummer. Ohne Eintrag bleibt eine eigene Eingabe stehen.
+  if SelectedSection = '' then
+    exit;
+  lDemoArticle := cfg.ReadString(SelectedSection,'DemoArticle','');
+  if lDemoArticle <> '' then
+    Edit1.Text := lDemoArticle;
 end;
 
 procedure TMainForm.Button2Click(Sender: TObject);
@@ -318,7 +332,10 @@ begin
       ListBox1.Items.Delete(i);
 
   if ListBox1.Items.Count > 0 then
+  begin
     ListBox1.ItemIndex := 0;
+    ListBox1Click(ListBox1);
+  end;
 end;
 
 procedure TMainForm.FormCreate(Sender: TObject);
