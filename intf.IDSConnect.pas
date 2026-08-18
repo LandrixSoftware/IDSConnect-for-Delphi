@@ -25,7 +25,7 @@ uses
   ,Vcl.Dialogs, WinApi.ShellAPI, WinApi.Windows,Vcl.Controls
   ,System.Net.HttpClient,System.Net.URLClient,System.Net.Mime
   ,Xml.XMLIntf, Xml.XMLDoc, Xml.xmldom
-  ,intf.IDSConnectTypes,intf.IDSConnectDlgWebBrowser
+  ,intf.IDSConnectTypes,intf.IDSConnectDlgWebBrowser,intf.IDSConnectDlgWait
   ;
 
 type
@@ -40,6 +40,11 @@ type
     //Optionaler Fehler-Callback. Fruehere Versionen haben Parser- und
     //Netzwerkfehler in leeren except-Bloecken verschluckt.
     IDSCONNECT_ONERROR : TIDSConnectOnException;
+    //Wie lange (in Sekunden) beim Warenkorb senden/empfangen auf die
+    //Rueckuebertragung gewartet wird. 0 = ohne Zeitbegrenzung warten, bis der
+    //Anwender abbricht. Fuer die Artikelsuche gibt es ab IDS 2.5.1 den
+    //eigenen Parameter hookURLTimeout an IDSConnectAS.
+    IDSCONNECT_HOOKURL_TIMEOUT : Integer;
   private type
     TValidateCertificatHelper = class(TObject)
       procedure DoValidateCertificateEvent(const Sender: TObject;
@@ -49,8 +54,14 @@ type
   private
     class procedure ReportError(const _Message : String; _E : Exception);
     class function GetUuid : String;
-    class function GetStreamFromUrl(const _URL : String; _Result : TStream; _OnReceiveData: TReceiveDataEvent; _OnError : TIDSConnectOnException) : Boolean;
     class function HookUrlWithSid(const _Sid : String) : String;
+    //Ein einzelner, stiller Abrufversuch. Liefert nur dann true, wenn
+    //tatsaechlich ein Warenkorb angekommen ist und gelesen werden konnte.
+    class function TryFetchResult(const _Url : String;_Warenkorb : TIDSConnect_Warenkorb) : Boolean;
+    //Wartet mit Fortschrittsdialog, bis die Rueckuebertragung eingetroffen
+    //ist, der Anwender abbricht oder das Timeout ablaeuft.
+    class function WaitForResult(const _Url : String;_Warenkorb : TIDSConnect_Warenkorb;
+                                 _TimeoutSec : Integer) : Boolean;
     class function BuildFormHeader(const _Title : String) : String;
     class function HiddenField(const _Name,_Value : String; _MaxLength : Integer = 0) : String;
     class function SaveFormToFile(_Form : TStrings; const _TmpFilename : String) : Boolean;
@@ -1311,6 +1322,17 @@ var
     if (_Obj.Email <> '') then _Val.AppendFormat('  '+'<Email>%s</Email>'+#13#10,[TIDSConnectHelper.XmlText(_Obj.Email,256)]);
   end;
 
+  //Adressbloecke werden ausgegeben, sobald irgendein Feld gefuellt ist
+  function AddressIsFilled(_Obj : TIDSConnect_Address) : Boolean;
+  begin
+    Result := (_Obj.Name1 <> '') or (_Obj.Name2 <> '') or (_Obj.Name3 <> '') or
+              (_Obj.Name4 <> '') or (_Obj.Street <> '') or (_Obj.Street1 <> '') or
+              (_Obj.Street2 <> '') or (_Obj.Street3 <> '') or (_Obj.PCode <> '') or
+              (_Obj.City <> '') or (_Obj.Country <> '') or (_Obj.ILN <> '') or
+              (_Obj.Contact <> '') or (_Obj.Phone <> '') or (_Obj.Fax <> '') or
+              (_Obj.Email <> '');
+  end;
+
   //Referenzen gibt es erst ab IDS 2.5.1
   procedure OutReferenz(const _Indent : String;_Obj : TIDSConnect_Referenz);
   begin
@@ -1398,26 +1420,57 @@ begin
   if (Order.OrderInfo.Kommission <> '') then _Val.AppendFormat('  '+'<Kommission>%s</Kommission>'+#13#10,[TIDSConnectHelper.XmlText(Order.OrderInfo.Kommission,80)]);
   _Val.Append('  '+'</OrderInfo>'+#13#10);
   //########## OrderInfo
-//  if (_Options.OutSupplierInfo) then
-//  begin
-//    _Val.Append('  '+'<SupplierInfo>'+#13#10);
-//    if (SupplierInfo.IDNo <> '') then _Val.AppendFormat('  '+'<IDNo>%s</IDNo>'+#13#10,[TIDSConnectHelper.StrMaxLength(SupplierInfo.IDNo,40)]);
-//    OutAddress(SupplierInfo.Address);
-//    _Val.Append('  '+'</SupplierInfo>'+#13#10);
-//  end;
-//  if (_Options.OutCustomerInfo) then
-//  begin
-//    _Val.Append('  '+'<CustomerInfo>'+#13#10);
-//    if (CustomerInfo.IDNo <> '') then _Val.AppendFormat('  '+'<IDNo>%s</IDNo>'+#13#10,[TIDSConnectHelper.StrMaxLength(CustomerInfo.IDNo,40)]);
-//    OutAddress(CustomerInfo.Address);
-//    _Val.Append('  '+'</CustomerInfo>'+#13#10);
-//  end;
-//  if (_Options.OutDeliveryPlaceInfo) then
-//  begin
-//    _Val.Append('  '+'<DeliveryPlaceInfo>'+#13#10);
-//    OutAddress(DeliveryPlaceInfo.Address);
-//    _Val.Append('  '+'</DeliveryPlaceInfo>'+#13#10);
-//  end;
+
+  //Die folgenden Bloecke waren frueher ueber einen Options-Record gesteuert
+  //und komplett auskommentiert - gepflegte Lieferanten-, Kunden- und
+  //Lieferortdaten sind dadurch beim Senden verloren gegangen. Sie werden
+  //jetzt ausgegeben, sobald sie gefuellt sind.
+  if (Order.SupplierInfo.IDNo <> '') or AddressIsFilled(Order.SupplierInfo.Address) then
+  begin
+    _Val.Append('  '+'<SupplierInfo>'+#13#10);
+    if (Order.SupplierInfo.IDNo <> '') then _Val.AppendFormat('  '+'<IDNo>%s</IDNo>'+#13#10,[TIDSConnectHelper.XmlText(Order.SupplierInfo.IDNo,40)]);
+    if AddressIsFilled(Order.SupplierInfo.Address) then
+    begin
+      _Val.Append('  '+'<Address>'+#13#10);
+      OutAddress(Order.SupplierInfo.Address);
+      _Val.Append('  '+'</Address>'+#13#10);
+    end;
+    _Val.Append('  '+'</SupplierInfo>'+#13#10);
+  end;
+
+  if (Order.CustomerInfo.IDNo <> '') or AddressIsFilled(Order.CustomerInfo.Address) then
+  begin
+    _Val.Append('  '+'<CustomerInfo>'+#13#10);
+    if (Order.CustomerInfo.IDNo <> '') then _Val.AppendFormat('  '+'<IDNo>%s</IDNo>'+#13#10,[TIDSConnectHelper.XmlText(Order.CustomerInfo.IDNo,40)]);
+    if AddressIsFilled(Order.CustomerInfo.Address) then
+    begin
+      _Val.Append('  '+'<Address>'+#13#10);
+      OutAddress(Order.CustomerInfo.Address);
+      _Val.Append('  '+'</Address>'+#13#10);
+    end;
+    _Val.Append('  '+'</CustomerInfo>'+#13#10);
+  end;
+
+  if (Order.DeliveryPlaceInfo.IDNo <> '') or
+     AddressIsFilled(Order.DeliveryPlaceInfo.Address) or
+     (lIs251 and Order.DeliveryPlaceInfo.HasGeoLocation) then
+  begin
+    _Val.Append('  '+'<DeliveryPlaceInfo>'+#13#10);
+    if (Order.DeliveryPlaceInfo.IDNo <> '') then _Val.AppendFormat('  '+'<IDNo>%s</IDNo>'+#13#10,[TIDSConnectHelper.XmlText(Order.DeliveryPlaceInfo.IDNo,40)]);
+    if AddressIsFilled(Order.DeliveryPlaceInfo.Address) then
+    begin
+      _Val.Append('  '+'<Address>'+#13#10);
+      OutAddress(Order.DeliveryPlaceInfo.Address);
+      _Val.Append('  '+'</Address>'+#13#10);
+    end;
+    //Geo-Daten gibt es erst ab IDS 2.5.1
+    if lIs251 and Order.DeliveryPlaceInfo.HasGeoLocation then
+    begin
+      _Val.AppendFormat('  '+'<GeoLat>%s</GeoLat>'+#13#10,[TIDSConnectHelper.FloatToStr(Order.DeliveryPlaceInfo.GeoLat,8)]);
+      _Val.AppendFormat('  '+'<GeoLang>%s</GeoLang>'+#13#10,[TIDSConnectHelper.FloatToStr(Order.DeliveryPlaceInfo.GeoLang,8)]);
+    end;
+    _Val.Append('  '+'</DeliveryPlaceInfo>'+#13#10);
+  end;
   for i := 0 to Order.OrderItems.Count-1 do
   begin
     _Val.Append('  '+'<OrderItem>'+#13#10);
@@ -1449,35 +1502,51 @@ begin
     _Val.AppendFormat('  '+'<ArtNo>%s</ArtNo>'+#13#10,[TIDSConnectHelper.XmlText(Order.OrderItems[i].ArtNo,15)]);
     _Val.AppendFormat('  '+'<Qty>%s</Qty>'+#13#10,[TIDSConnectHelper.FloatToStr(Order.OrderItems[i].Qty,2)]);
     _Val.AppendFormat('  '+'<QU>%s</QU>'+#13#10,[TIDSConnectHelper.QuToQuStr(Order.OrderItems[i].QU)]);
-//    if (not _Options.OutHWPMode) then
-//    begin
-//      if OrderItems[i].Kurztext <> '' then _Val.AppendFormat('  '+'<Kurztext>%s</Kurztext>'+#13#10,[TIDSConnectHelper.StrMaxLength(OrderItems[i].Kurztext,100)]);
-//      if OrderItems[i].Langtext <> '' then _Val.AppendFormat('  '+'<Langtext>%s</Langtext>'+#13#10,[OrderItems[i].Langtext]);
-//      if OrderItems[i].OfferPrice <> 0 then _Val.AppendFormat('  '+'<OfferPrice>%s</OfferPrice>'+#13#10,[IDSFloatToStr(OrderItems[i].OfferPrice,4)]);
-//      if OrderItems[i].NetPrice <> 0 then _Val.AppendFormat('  '+'<NetPrice>%s</NetPrice>'+#13#10,[IDSFloatToStr(OrderItems[i].NetPrice,4)]);
-//      if OrderItems[i].PriceBasis <> 0 then _Val.AppendFormat('  '+'<PriceBasis>%s</PriceBasis>'+#13#10,[IDSFloatToStr(OrderItems[i].PriceBasis,2)]);
-//      if OrderItems[i].VAT <> 0 then _Val.AppendFormat('  '+'<VAT>%s</VAT>'+#13#10,[IDSFloatToStr(OrderItems[i].VAT,2)]);
-//      if OrderItems[i].TechnClarification <> '' then _Val.AppendFormat('  '+'<TechnClarification>%s</TechnClarification>'+#13#10,[TIDSConnectHelper.StrMaxLength(OrderItems[i].TechnClarification,3)]);
-//      if OrderItems[i].Hinweis <> '' then _Val.AppendFormat('  '+'<Hinweis>%s</Hinweis>'+#13#10,[OrderItems[i].Hinweis]);
-//      //Fehlercode : TIDS_Fehlercode;
-//      //Fehlertext : String;
-//      if OrderItems[i].Zuschlag <> 0 then _Val.AppendFormat('  '+'<Zuschlag>%s</Zuschlag>'+#13#10,[IDSFloatToStr(OrderItems[i].Zuschlag,4)]);
-//      if (OrderItems[i].Rohstoffanteil.Count > 0) then
-//      begin
-//      _Val.Append('  '+'<Rohstoffanteil>'+#13#10);
-//      for j := 0 to OrderItems[i].Rohstoffanteil.Count - 1 do
-//      begin
-//        _Val.AppendFormat('  '+'<Rohstoff>%s</Rohstoff>'+#13#10,[IDSRohstoffToRohstoffStr(OrderItems[i].Rohstoffanteil[j].Rohstoff)]);
-//        _Val.AppendFormat('  '+'<Gewichtsanteilswert>%s</Gewichtsanteilswert>'+#13#10,[IDSFloatToStr(OrderItems[i].Rohstoffanteil[j].Gewichtsanteilswert,4)]);
-//        _Val.AppendFormat('  '+'<Gewichtsanteilseinheit>%s</Gewichtsanteilseinheit>'+#13#10,[IDSQuToQuStr(OrderItems[i].Rohstoffanteil[j].Gewichtsanteilseinheit)]);
-//        _Val.AppendFormat('  '+'<Basiswert>%s</Basiswert>'+#13#10,[IDSFloatToStr(OrderItems[i].Rohstoffanteil[j].Basiswert,4)]);
-//        _Val.AppendFormat('  '+'<Basiseinheit>%s</Basiseinheit>'+#13#10,[IDSQuToQuStr(OrderItems[i].Rohstoffanteil[j].Basiseinheit)]);
-//        _Val.AppendFormat('  '+'<Basisnotierung>%s</Basisnotierung>'+#13#10,[IDSFloatToStr(OrderItems[i].Rohstoffanteil[j].Basisnotierung,4)]);
-//        _Val.AppendFormat('  '+'<NotierungAktuell>%s</NotierungAktuell>'+#13#10,[IDSFloatToStr(OrderItems[i].Rohstoffanteil[j].NotierungAktuell,4)]);
-//      end;
-//       _Val.Append('  '+'</Rohstoffanteil>'+#13#10);
-//      end;
-//    end;
+    //Texte, Preise und Rohstoffanteile waren bisher komplett auskommentiert.
+    //Sie werden ausgegeben, sobald sie gefuellt sind - eine reine Anfrage ohne
+    //Preise erzeugt also weiterhin genau dieselben Elemente wie zuvor.
+    if Order.OrderItems[i].Kurztext <> '' then _Val.AppendFormat('  '+'<Kurztext>%s</Kurztext>'+#13#10,[TIDSConnectHelper.XmlText(Order.OrderItems[i].Kurztext,100)]);
+    if Order.OrderItems[i].Langtext <> '' then _Val.AppendFormat('  '+'<Langtext>%s</Langtext>'+#13#10,[TIDSConnectHelper.XmlEscape(Order.OrderItems[i].Langtext)]);
+    if Order.OrderItems[i].OfferPrice <> 0 then _Val.AppendFormat('  '+'<OfferPrice>%s</OfferPrice>'+#13#10,[TIDSConnectHelper.FloatToStr(Order.OrderItems[i].OfferPrice,4)]);
+    if Order.OrderItems[i].NetPrice <> 0 then _Val.AppendFormat('  '+'<NetPrice>%s</NetPrice>'+#13#10,[TIDSConnectHelper.FloatToStr(Order.OrderItems[i].NetPrice,4)]);
+    //PriceBasis wird mit 1 vorbelegt; die 1 ist der Standardfall und muss
+    //nicht uebertragen werden
+    if (Order.OrderItems[i].PriceBasis <> 0) and (Order.OrderItems[i].PriceBasis <> 1) then
+      _Val.AppendFormat('  '+'<PriceBasis>%s</PriceBasis>'+#13#10,[TIDSConnectHelper.FloatToStr(Order.OrderItems[i].PriceBasis,2)]);
+    if Order.OrderItems[i].VAT <> 0 then _Val.AppendFormat('  '+'<VAT>%s</VAT>'+#13#10,[TIDSConnectHelper.FloatToStr(Order.OrderItems[i].VAT,2)]);
+    //idsConnectTc_None liefert einen Leerstring und wird weggelassen
+    if TIDSConnectHelper.TechnClarificationToStr(Order.OrderItems[i].TechnClarification) <> '' then
+      _Val.AppendFormat('  '+'<TechnClarification>%s</TechnClarification>'+#13#10,[TIDSConnectHelper.TechnClarificationToStr(Order.OrderItems[i].TechnClarification)]);
+    if Order.OrderItems[i].Hinweis <> '' then _Val.AppendFormat('  '+'<Hinweis>%s</Hinweis>'+#13#10,[TIDSConnectHelper.XmlText(Order.OrderItems[i].Hinweis,256)]);
+    if Order.OrderItems[i].Fehlercode <> idsConnectFc_None then
+      _Val.Append('  '+'<Fehlercode>1</Fehlercode>'+#13#10);
+    if Order.OrderItems[i].Fehlertext <> '' then _Val.AppendFormat('  '+'<Fehlertext>%s</Fehlertext>'+#13#10,[TIDSConnectHelper.XmlText(Order.OrderItems[i].Fehlertext,256)]);
+    if Order.OrderItems[i].Zuschlag <> 0 then _Val.AppendFormat('  '+'<Zuschlag>%s</Zuschlag>'+#13#10,[TIDSConnectHelper.FloatToStr(Order.OrderItems[i].Zuschlag,4)]);
+    //Rohstoffanteil ist ein wiederholbares Element, kein Sammelknoten
+    for j := 0 to Order.OrderItems[i].Rohstoffanteile.Count-1 do
+    begin
+      //MS und MK kennt erst die Codeliste von 2.5.1. Wuerde man sie in ein
+      //2.5-Dokument schreiben, verletzte das die Enumeration der XSD.
+      if (not lIs251) and
+         (Order.OrderItems[i].Rohstoffanteile[j].Rohstoff in [idsConnectR_MS,idsConnectR_MK]) then
+      begin
+        TIDSConnect.ReportError(Format('Der Rohstoff %s ist erst ab IDS 2.5.1 definiert und wurde in Position %d ausgelassen.',
+                                [TIDSConnectHelper.RohstoffToRohstoffStr(Order.OrderItems[i].Rohstoffanteile[j].Rohstoff),i+1]),nil);
+        continue;
+      end;
+      _Val.Append('   '+'<Rohstoffanteil>'+#13#10);
+      _Val.AppendFormat('    '+'<Rohstoff>%s</Rohstoff>'+#13#10,[TIDSConnectHelper.RohstoffToRohstoffStr(Order.OrderItems[i].Rohstoffanteile[j].Rohstoff)]);
+      _Val.AppendFormat('    '+'<Gewichtsanteilswert>%s</Gewichtsanteilswert>'+#13#10,[TIDSConnectHelper.FloatToStr(Order.OrderItems[i].Rohstoffanteile[j].Gewichtsanteilswert,4)]);
+      _Val.AppendFormat('    '+'<Gewichtsanteilseinheit>%s</Gewichtsanteilseinheit>'+#13#10,[TIDSConnectHelper.QuToQuStr(Order.OrderItems[i].Rohstoffanteile[j].Gewichtsanteilseinheit)]);
+      _Val.AppendFormat('    '+'<Basiswert>%s</Basiswert>'+#13#10,[TIDSConnectHelper.FloatToStr(Order.OrderItems[i].Rohstoffanteile[j].Basiswert,4)]);
+      _Val.AppendFormat('    '+'<Basiseinheit>%s</Basiseinheit>'+#13#10,[TIDSConnectHelper.QuToQuStr(Order.OrderItems[i].Rohstoffanteile[j].Basiseinheit)]);
+      _Val.AppendFormat('    '+'<Basisnotierung>%s</Basisnotierung>'+#13#10,[TIDSConnectHelper.FloatToStr(Order.OrderItems[i].Rohstoffanteile[j].Basisnotierung,4)]);
+      _Val.AppendFormat('    '+'<NotierungAktuell>%s</NotierungAktuell>'+#13#10,[TIDSConnectHelper.FloatToStr(Order.OrderItems[i].Rohstoffanteile[j].NotierungAktuell,4)]);
+      _Val.Append('   '+'</Rohstoffanteil>'+#13#10);
+    end;
+    //Divers wurde bisher weder gelesen noch geschrieben
+    if Order.OrderItems[i].Divers then
+      _Val.Append('  '+'<Divers>true</Divers>'+#13#10);
     //ab IDS 2.5.1: Summe der Rohstoffzuschlaege, skontofaehiger Betrag und
     //Belegreferenzen auf Positionsebene
     if lIs251 then
@@ -1513,44 +1582,6 @@ begin
     TIDSConnect.IDSCONNECT_ONERROR(_Message,_E);
 end;
 
-class function TIDSConnect.GetStreamFromUrl(const _URL: String;
-  _Result: TStream; _OnReceiveData: TReceiveDataEvent;
-  _OnError: TIDSConnectOnException): Boolean;
-var
-  http : THTTPClient;
-  vcHelper : TIDSConnect.TValidateCertificatHelper;
-begin
-  result := false;
-  if _Result = nil then
-    exit;
-  if _URL = '' then
-    exit;
-  http := THTTPClient.Create;
-  vcHelper := TIDSConnect.TValidateCertificatHelper.Create;
-  try
-    http.OnValidateServerCertificate := vcHelper.DoValidateCertificateEvent;
-    http.OnReceiveData := _OnReceiveData;
-    //Ohne Timeouts konnte der Aufruf die Oberflaeche unbegrenzt blockieren
-    http.ConnectionTimeout := 15000;
-    http.ResponseTimeout := 60000;
-    try
-      with http.Get(_URL,_Result) do
-        result := StatusCode = 200;
-    except
-      on E:Exception do
-      begin
-        if Assigned(_OnError) then
-          _OnError('',E)
-        else
-          ReportError('Der Abruf von '+_URL+' ist fehlgeschlagen: '+E.Message,E);
-      end;
-    end;
-  finally
-    vcHelper.Free;
-    http.Free;
-  end;
-end;
-
 class function TIDSConnect.GetUuid: String;
 begin
   Result := TGUID.NewGuid.ToString;
@@ -1569,6 +1600,64 @@ begin
     Result := Result+'&sid='+_Sid
   else
     Result := Result+'?sid='+_Sid;
+end;
+
+class function TIDSConnect.TryFetchResult(const _Url: String;
+  _Warenkorb: TIDSConnect_Warenkorb): Boolean;
+var
+  str : TMemoryStream;
+  http : THTTPClient;
+  vcHelper : TIDSConnect.TValidateCertificatHelper;
+begin
+  Result := false;
+  if (_Url = '') or (_Warenkorb = nil) then
+    exit;
+
+  str := TMemoryStream.Create;
+  http := THTTPClient.Create;
+  vcHelper := TIDSConnect.TValidateCertificatHelper.Create;
+  try
+    http.OnValidateServerCertificate := vcHelper.DoValidateCertificateEvent;
+    //Kurze Timeouts, damit der Warte-Dialog zwischen zwei Versuchen bedienbar
+    //bleibt - ein einzelner Versuch darf das Warten nicht blockieren
+    http.ConnectionTimeout := 5000;
+    http.ResponseTimeout := 10000;
+    try
+      //Solange noch nichts vorliegt, antwortet der Callback-Endpunkt mit 404
+      //bzw. mit einem leeren Rumpf. Das ist kein Fehler, sondern der
+      //Normalfall waehrend des Wartens - deshalb wird hier nichts gemeldet.
+      if http.Get(_Url,str).StatusCode <> 200 then
+        exit;
+      if str.Size = 0 then
+        exit;
+      Result := _Warenkorb.LoadFromStream(str);
+    except
+      //Netzwerkaussetzer beenden das Warten nicht, der naechste Versuch folgt
+      on E:Exception do
+        Result := false;
+    end;
+  finally
+    vcHelper.Free;
+    http.Free;
+    str.Free;
+  end;
+end;
+
+class function TIDSConnect.WaitForResult(const _Url: String;
+  _Warenkorb: TIDSConnect_Warenkorb; _TimeoutSec: Integer): Boolean;
+begin
+  //Frueher stand hier ein TaskMessageDlg mit genau einem Abrufversuch
+  //danach: war der Warenkorb noch nicht angekommen, scheiterte der Vorgang
+  //ohne Wiederholung und ohne Diagnose.
+  Result := TIDSConnectDlgWait.Execute(
+              'Warte auf Abschluss',
+              'Bitte schliessen Sie den Vorgang im Browser ab.'+sLineBreak+
+              'Der Warenkorb wird danach automatisch uebernommen.',
+              _TimeoutSec,
+              function : Boolean
+              begin
+                Result := TryFetchResult(_Url,_Warenkorb);
+              end);
 end;
 
 class function TIDSConnect.BuildFormHeader(const _Title: String): String;
@@ -1661,7 +1750,6 @@ class function TIDSConnect.IDSConnectAS(_ServiceURL, _Cst, _UN, _Pwd,
 var
   hstrl : TStringList;
   sid : String;
-  str : TMemoryStream;
 begin
   Result := false;
   if _ServiceURL.IsEmpty then
@@ -1706,16 +1794,10 @@ begin
   if not OpenInBrowser(_TmpFilename) then
     exit;
 
-  if TaskMessageDlg('Warte auf Abschluss...', 'Warenkorb einlesen', mtConfirmation, mbYesNoCancel, 0) = mrYes then
-  begin
-    str := TMemoryStream.Create;
-    try
-      if TIDSConnect.GetStreamFromUrl(HookUrlWithSid(sid),str,nil,nil) then
-        Result := _Warenkorb.LoadFromStream(str);
-    finally
-      str.Free;
-    end;
-  end;
+  //Wartet mit Fortschrittsdialog und fragt die Hook-URL im Intervall ab.
+  //_HookUrlTimeout ist der IDS-2.5.1-Parameter hookURLTimeout; ohne Angabe
+  //wird bis zum Abbruch durch den Anwender gewartet.
+  Result := WaitForResult(HookUrlWithSid(sid),_Warenkorb,_HookUrlTimeout);
 end;
 
 class function TIDSConnect.IDSConnectWKE(const _ServiceURL, _Cst, _UN, _Pwd,
@@ -1723,7 +1805,6 @@ class function TIDSConnect.IDSConnectWKE(const _ServiceURL, _Cst, _UN, _Pwd,
 var
   hstrl : TStringList;
   sid : String;
-  str : TMemoryStream;
 begin
   Result := false;
   if _ServiceURL.IsEmpty then
@@ -1761,16 +1842,8 @@ begin
   if not OpenInBrowser(_TmpFilename) then
     exit;
 
-  if TaskMessageDlg('Warte auf Abschluss...', 'Warenkorb einlesen', mtConfirmation, mbYesNoCancel, 0) = mrYes then
-  begin
-    str := TMemoryStream.Create;
-    try
-      if TIDSConnect.GetStreamFromUrl(HookUrlWithSid(sid),str,nil,nil) then
-        Result := _Warenkorb.LoadFromStream(str);
-    finally
-      str.Free;
-    end;
-  end;
+  //Wartet mit Fortschrittsdialog und fragt die Hook-URL im Intervall ab
+  Result := WaitForResult(HookUrlWithSid(sid),_Warenkorb,IDSCONNECT_HOOKURL_TIMEOUT);
 end;
 
 class function TIDSConnect.IDSConnectWKS(_ServiceURL, _Cst, _UN, _Pwd,
@@ -1779,7 +1852,6 @@ class function TIDSConnect.IDSConnectWKS(_ServiceURL, _Cst, _UN, _Pwd,
 var
   hstrl : TStringList;
   sid : String;
-  str : TMemoryStream;
   hstr : TStringBuilder;
 begin
   Result := false;
@@ -1835,16 +1907,8 @@ begin
     exit;
   end;
 
-  if TaskMessageDlg('Warte auf Abschluss...', 'Warenkorb einlesen', mtConfirmation, mbYesNoCancel, 0) = mrYes then
-  begin
-    str := TMemoryStream.Create;
-    try
-      if TIDSConnect.GetStreamFromUrl(HookUrlWithSid(sid),str,nil,nil) then
-        Result := _Warenkorb.LoadFromStream(str);
-    finally
-      str.Free;
-    end;
-  end;
+  //Wartet mit Fortschrittsdialog und fragt die Hook-URL im Intervall ab
+  Result := WaitForResult(HookUrlWithSid(sid),_Warenkorb,IDSCONNECT_HOOKURL_TIMEOUT);
 end;
 
 { TIDSConnect.TValidateCertificatHelper }
