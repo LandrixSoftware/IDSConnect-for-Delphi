@@ -64,6 +64,32 @@ Ein passendes Server-Skript liegt als [idsconnect.php](idsconnect.php) bei. Übe
 diese Adresse laufen Warenkorb-, Preis- und Kundendaten — sie gehört auf einen
 Server, den man selbst kontrolliert.
 
+Nach dem Absenden zeigt die Unit einen Warte-Dialog und fragt die Hook-URL im
+Abstand von zwei Sekunden ab, bis die Rückübertragung eintrifft, der Anwender
+abbricht oder das Zeitlimit abläuft:
+
+```pascal
+//Sekunden; 0 = ohne Zeitbegrenzung warten, bis der Anwender abbricht
+TIDSConnect.IDSCONNECT_HOOKURL_TIMEOUT := 300;
+```
+
+Für die Artikelsuche gilt stattdessen der an `IDSConnectAS` übergebene
+`hookURLTimeout`.
+
+## Was serialisiert wird
+
+`SaveToString` gibt jeden Block aus, sobald er gefüllt ist — eine reine Anfrage
+ohne Preise erzeugt also dieselben Elemente wie bisher:
+
+* `SupplierInfo`, `CustomerInfo` und `DeliveryPlaceInfo`, sobald `IDNo` oder ein
+  Adressfeld gesetzt ist (beim Lieferort ab 2.5.1 auch bei gesetzten Geodaten)
+* je Position `Kurztext`, `Langtext`, `OfferPrice`, `NetPrice`, `PriceBasis`,
+  `VAT`, `TechnClarification`, `Hinweis`, `Fehlercode`, `Fehlertext`,
+  `Zuschlag`, `Rohstoffanteil` und `Divers`, sofern belegt
+
+Alle Textinhalte werden XML-maskiert; beim Einbetten in das HTML-Formular kommt
+die HTML-Maskierung hinzu.
+
 ## Fehlerbehandlung
 
 Parser- und Netzwerkfehler werden über einen optionalen Callback gemeldet:

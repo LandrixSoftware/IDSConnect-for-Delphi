@@ -321,6 +321,9 @@ procedure TMainForm.FormCreate(Sender: TObject);
 begin
   Memo1.Clear;
   TIDSConnect.IDSCONNECT_ONERROR := HandleIDSError;
+  //Wie lange beim Senden/Empfangen auf die Rueckuebertragung gewartet wird.
+  //0 waere ohne Zeitbegrenzung, bis der Anwender abbricht.
+  TIDSConnect.IDSCONNECT_HOOKURL_TIMEOUT := 300;
   LoadConfig;
 end;
 
