@@ -27,6 +27,10 @@ type
     //konnte der Dialog sich nie selbst schliessen.
     returnUrlPrefix : String;
   public
+    //Liefert den Ordner, in dem WebView2 Profil, Cookies und Cache ablegt.
+    //Ist _CachePath leer, wird ein anwendungseigener Ordner unterhalb von
+    //%LOCALAPPDATA% verwendet und bei Bedarf angelegt.
+    class function ResolveCachePath(const _CachePath : String) : String;
     class function ShowDialog(const _IDSHTMLValue,_CachePath : String;
                               const _ReturnUrlPrefix : String = '') : Boolean;
   end;
@@ -85,6 +89,32 @@ begin
     ModalResult := mrOK;
 end;
 
+class function TIDSConnectDlgWebBrowser.ResolveCachePath(const _CachePath: String): String;
+begin
+  Result := _CachePath;
+
+  //Bleibt der Ordner leer, legt WebView2 sein Profil im Verzeichnis der
+  //ausfuehrbaren Datei an - unter C:\Program Files schlaegt die
+  //Initialisierung damit fehl. Der Standard aus der DFM zeigte ausserdem auf
+  //den Ordner der Entwicklungsumgebung (bds.exe.WebView2).
+  //Deshalb ein anwendungseigener, beschreibbarer Ordner unter %LOCALAPPDATA%.
+  //Er ist bewusst dauerhaft: WebView2 legt dort Cookies und Anmeldesitzung
+  //ab, sonst muesste sich der Anwender bei jedem Aufruf neu anmelden.
+  if Result = '' then
+    Result := TPath.Combine(TPath.GetCachePath,
+                ChangeFileExt(ExtractFileName(Application.ExeName),'')+'.IDSConnect.WebView2');
+
+  if not TDirectory.Exists(Result) then
+  try
+    TDirectory.CreateDirectory(Result);
+  except
+    on E:Exception do
+      //Kein Abbruch: WebView2 meldet das Problem sonst ueber AResult
+      MessageDlg('Der Ordner für den integrierten Browser konnte nicht angelegt werden:'+sLineBreak+
+                 Result+sLineBreak+E.Message,mtWarning,[mbOk],0);
+  end;
+end;
+
 class function TIDSConnectDlgWebBrowser.ShowDialog(const _IDSHTMLValue,_CachePath : String;
   const _ReturnUrlPrefix : String): Boolean;
 var
@@ -92,12 +122,7 @@ var
 begin
   lDlg := TIDSConnectDlgWebBrowser.Create(Application.MainForm);
   try
-    //Ein leerer UserDataFolder wuerde als leerer Pfad an die WebView2-Umgebung
-    //durchgereicht; der Standard aus der DFM zeigt auf den IDE-Ordner.
-    if _CachePath <> '' then
-      lDlg.WebBrowser.UserDataFolder := _CachePath
-    else
-      lDlg.WebBrowser.UserDataFolder := TPath.Combine(TPath.GetCachePath,'IDSConnect.WebView2');
+    lDlg.WebBrowser.UserDataFolder := ResolveCachePath(_CachePath);
     lDlg.content := _IDSHTMLValue;
     lDlg.returnUrlPrefix := _ReturnUrlPrefix;
     Result := lDlg.ShowModal = mrOK;

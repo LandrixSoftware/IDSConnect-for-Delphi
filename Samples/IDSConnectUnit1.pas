@@ -288,8 +288,10 @@ begin
               TempHtmlFilename,
               Edit2.Text,
               lWarenkorb,
-              //ab IDS 2.5.1: keine Mehrfachrueckgabe, Hook-URL 300 Sekunden aktiv
-              false,300) then
+              //ab IDS 2.5.1: Mehrfachrueckgabe erlauben, damit nacheinander
+              //mehrere Artikel uebernommen werden koennen. Die Hook-URL
+              //bleibt jeweils 300 Sekunden nach der letzten Rueckgabe aktiv.
+              true,300) then
     begin
       Memo1.Lines.Add('Es wurde kein Suchergebnis übernommen.');
       exit;

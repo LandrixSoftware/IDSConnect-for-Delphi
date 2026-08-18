@@ -69,6 +69,7 @@ type
     ReferenzType : TIDSConnect_ReferenzType;  //Muss Belegart
     constructor Create;
     procedure Clear; virtual;
+    procedure Assign(_From : TIDSConnect_Referenz); virtual;
   end;
 
   TIDSConnect_ReferenzList = class(TObjectList<TIDSConnect_Referenz>)
@@ -81,6 +82,7 @@ type
   public
     ReferenzLine : String; //Muss String 10 Belegposition
     procedure Clear; override;
+    procedure Assign(_From : TIDSConnect_Referenz); override;
   end;
 
   TIDSConnect_ReferenzPosList = class(TObjectList<TIDSConnect_ReferenzPos>)
@@ -223,6 +225,7 @@ type
     NotierungAktuell : double;//Kann Aktuelle DEL-Notierung Beinhaltet die DEL-Notierung, mit der der Nettopreisberechnet wurde; muss nicht der aktuellen DEL-Notierungentsprechen, da ggf. f�r Kontingente fixiert.K Einfach DEZIMAL10,4Order/OrderItem/Rohstoffanteil/
     constructor Create;
     procedure Clear;
+    procedure Assign(_From : TIDSConnect_Rohstoffanteil);
   end;
 
   TIDSConnect_RohstoffanteilList = class(TObjectList<TIDSConnect_Rohstoffanteil>)
@@ -269,6 +272,10 @@ type
     constructor Create;
     destructor Destroy; override;
     procedure Clear;
+    //Uebernimmt alle Felder inklusive Rohstoffanteilen und Referenzen.
+    //Wird gebraucht, um mehrere Rueckuebertragungen (multipleResult, ab
+    //IDS 2.5.1) in einem Warenkorb zu sammeln.
+    procedure Assign(_From : TIDSConnect_OrderItem);
   end;
 
   TIDSConnect_OrderItemList = class(TObjectList<TIDSConnect_OrderItem>)
@@ -333,6 +340,15 @@ begin
   ReferenzType := idsConnectRefType_None;
 end;
 
+procedure TIDSConnect_Referenz.Assign(_From: TIDSConnect_Referenz);
+begin
+  if _From = nil then
+    exit;
+  ReferenzNumber := _From.ReferenzNumber;
+  ReferenzDate := _From.ReferenzDate;
+  ReferenzType := _From.ReferenzType;
+end;
+
 { TIDSConnect_ReferenzList }
 
 function TIDSConnect_ReferenzList.AddItem: TIDSConnect_Referenz;
@@ -347,6 +363,13 @@ procedure TIDSConnect_ReferenzPos.Clear;
 begin
   inherited;
   ReferenzLine := '';
+end;
+
+procedure TIDSConnect_ReferenzPos.Assign(_From: TIDSConnect_Referenz);
+begin
+  inherited;
+  if _From is TIDSConnect_ReferenzPos then
+    ReferenzLine := TIDSConnect_ReferenzPos(_From).ReferenzLine;
 end;
 
 { TIDSConnect_ReferenzPosList }
@@ -495,6 +518,19 @@ begin
   NotierungAktuell := 0;
 end;
 
+procedure TIDSConnect_Rohstoffanteil.Assign(_From: TIDSConnect_Rohstoffanteil);
+begin
+  if _From = nil then
+    exit;
+  Rohstoff := _From.Rohstoff;
+  Gewichtsanteilswert := _From.Gewichtsanteilswert;
+  Gewichtsanteilseinheit := _From.Gewichtsanteilseinheit;
+  Basiswert := _From.Basiswert;
+  Basiseinheit := _From.Basiseinheit;
+  Basisnotierung := _From.Basisnotierung;
+  NotierungAktuell := _From.NotierungAktuell;
+end;
+
 { TIDSConnect_RohstoffanteilList }
 
 function TIDSConnect_RohstoffanteilList.AddItem: TIDSConnect_Rohstoffanteil;
@@ -548,6 +584,47 @@ begin
   SumMaterialSurcharges := 0;
   DiscountableAmount := 0;
   Referenzen.Clear;
+end;
+
+procedure TIDSConnect_OrderItem.Assign(_From: TIDSConnect_OrderItem);
+var
+  i : Integer;
+begin
+  if _From = nil then
+    exit;
+  ItemChara := _From.ItemChara;
+  RefItems_Customer := _From.RefItems_Customer;
+  RefItems_CustomerSubNo := _From.RefItems_CustomerSubNo;
+  RefItems_Supplier := _From.RefItems_Supplier;
+  RefItems_SupplierSubNo := _From.RefItems_SupplierSubNo;
+  EAN := _From.EAN;
+  ManufacturerID := _From.ManufacturerID;
+  ManufacturerIDType := _From.ManufacturerIDType;
+  ArtNo := _From.ArtNo;
+  Qty := _From.Qty;
+  QU := _From.QU;
+  Kurztext := _From.Kurztext;
+  Langtext := _From.Langtext;
+  OfferPrice := _From.OfferPrice;
+  NetPrice := _From.NetPrice;
+  PriceBasis := _From.PriceBasis;
+  VAT := _From.VAT;
+  TechnClarification := _From.TechnClarification;
+  Hinweis := _From.Hinweis;
+  Fehlercode := _From.Fehlercode;
+  Fehlertext := _From.Fehlertext;
+  Zuschlag := _From.Zuschlag;
+  Divers := _From.Divers;
+  SumMaterialSurcharges := _From.SumMaterialSurcharges;
+  DiscountableAmount := _From.DiscountableAmount;
+
+  Rohstoffanteile.Clear;
+  for i := 0 to _From.Rohstoffanteile.Count-1 do
+    Rohstoffanteile.AddItem.Assign(_From.Rohstoffanteile[i]);
+
+  Referenzen.Clear;
+  for i := 0 to _From.Referenzen.Count-1 do
+    Referenzen.AddItem.Assign(_From.Referenzen[i]);
 end;
 
 { TIDSConnect_OrderItemList }

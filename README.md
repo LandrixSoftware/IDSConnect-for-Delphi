@@ -52,6 +52,21 @@ TIDSConnect.IDSConnectAS(URL,Kundennr,Benutzer,Passwort,TempDatei,Suchbegriff,
                          300);   //HookUrl bleibt 300 Sekunden aktiv
 ```
 
+### Mehrfachrückgabe
+
+Mit `multipleResult = True` darf der Shop mehrfach an die Hook-URL senden. Der
+Warte-Dialog bleibt dann offen und übernimmt jede eintreffende Rückgabe: deren
+Positionen werden an `lWarenkorb` **angehängt**, die Kopfdaten stammen aus der
+ersten Rückgabe. Der Dialog zeigt laufend die Anzahl der übernommenen Rückgaben;
+beendet wird der Vorgang über „Fertig" oder durch Ablauf der Frist.
+
+`hookURLTimeout` bemisst sich dabei — wie in der Spezifikation vorgesehen — ab
+der **letzten** Übertragung: nach jeder Rückgabe beginnt die Frist von vorn.
+
+Wer den Ablauf selbst steuern will, kann die Rückgaben mit
+`TIDSConnect.MergeOrderItems(_Quelle,_Ziel)` zusammenführen — nötig, weil
+`LoadFromStream` den Zielwarenkorb vor dem Einlesen leert.
+
 ## Rücksprungadresse (Hook-URL)
 
 Die Rück-Kommunikation läuft über eine eigene, per HTTPS erreichbare Adresse:
@@ -124,6 +139,22 @@ den Parameter `_TmpFilename`:
 Im integrierten Browser erkennt der Dialog den Sprung auf die Hook-URL selbst
 und schließt sich; der Warenkorb wird danach abgeholt. Beim Standardbrowser
 übernimmt das der Warte-Dialog mit Polling.
+
+### Profil- und Cache-Ordner
+
+`TEdgeBrowser` braucht einen beschreibbaren Ordner für Profil, Cookies und
+Cache. Bleibt er leer, legt WebView2 ihn **neben der ausführbaren Datei** an —
+unter `C:\Program Files` schlägt die Initialisierung damit fehl. Deshalb wird,
+wenn beim `ShowDialog` kein Pfad übergeben wird, automatisch
+
+```
+%LOCALAPPDATA%\<AnwendungsName>.IDSConnect.WebView2
+```
+
+verwendet und bei Bedarf angelegt. Der Ordner ist bewusst dauerhaft und kein
+Temp-Verzeichnis: WebView2 legt dort die Anmeldesitzung ab, sonst müsste sich
+der Anwender bei jedem Aufruf neu am Shop anmelden. Ein eigener Pfad lässt sich
+weiterhin übergeben.
 
 ## Beispielprojekt
 

@@ -66,7 +66,7 @@ type
     //Wartet mit Fortschrittsdialog, bis die Rueckuebertragung eingetroffen
     //ist, der Anwender abbricht oder das Timeout ablaeuft.
     class function WaitForResult(const _Url : String;_Warenkorb : TIDSConnect_Warenkorb;
-                                 _TimeoutSec : Integer) : Boolean;
+                                 _TimeoutSec : Integer;_MultipleResult : Boolean = false) : Boolean;
     class function BuildFormHeader(const _Title : String) : String;
     class function HiddenField(const _Name,_Value : String; _MaxLength : Integer = 0) : String;
     class function SaveFormToFile(_Form : TStrings; const _TmpFilename : String) : Boolean;
@@ -75,8 +75,13 @@ type
     //_TmpFilename = '' -> integrierter Browser, sonst externer Browser ueber
     //eine temporaere Datei. _ResultUrl = '' -> es wird kein Ergebnis erwartet.
     class function ShowFormAndFetch(_Form : TStrings; const _TmpFilename,_ResultUrl : String;
-                                    _Warenkorb : TIDSConnect_Warenkorb; _TimeoutSec : Integer) : Boolean;
+                                    _Warenkorb : TIDSConnect_Warenkorb; _TimeoutSec : Integer;
+                                    _MultipleResult : Boolean = false) : Boolean;
   public
+    //Haengt die Positionen einer Rueckgabe an den Zielwarenkorb an. Wird bei
+    //der Mehrfachrueckgabe (multipleResult, ab IDS 2.5.1) gebraucht und steht
+    //auch fuer eine eigene Ablaufsteuerung zur Verfuegung.
+    class procedure MergeOrderItems(_From,_To : TIDSConnect_Warenkorb);
     class procedure IDSConnectADT(const _ServiceURL,_Cst,_UN,_Pwd,_ArtNr,_TmpFilename : String);
     class function  IDSConnectWKE(const _ServiceURL,_Cst,_UN,_Pwd,_TmpFilename : String;_Warenkorb : TIDSConnect_Warenkorb) : Boolean;
     class function  IDSConnectWKS(_ServiceURL,_Cst,_UN,_Pwd,_TmpFilename : String;_Warenkorb : TIDSConnect_Warenkorb;_DontWait : Boolean = false) : Boolean;
@@ -1682,33 +1687,99 @@ begin
   Result := TryFetchResult(_Url,_Warenkorb,lError);
 end;
 
+class procedure TIDSConnect.MergeOrderItems(_From, _To: TIDSConnect_Warenkorb);
+var
+  i : Integer;
+begin
+  if (_From = nil) or (_To = nil) then
+    exit;
+  //Bei der ersten Rueckgabe auch die Kopfdaten uebernehmen; danach werden nur
+  //noch Positionen angehaengt, damit mehrere Rueckgaben nicht die zuvor
+  //empfangenen ueberschreiben.
+  if _To.Order.OrderItems.Count = 0 then
+  begin
+    _To.WarenkorbInfo.Date := _From.WarenkorbInfo.Date;
+    _To.WarenkorbInfo.Time := _From.WarenkorbInfo.Time;
+    _To.WarenkorbInfo.RueckgabeKZ := _From.WarenkorbInfo.RueckgabeKZ;
+    _To.WarenkorbInfo.Version := _From.WarenkorbInfo.Version;
+  end;
+  for i := 0 to _From.Order.OrderItems.Count-1 do
+    _To.Order.OrderItems.AddItem.Assign(_From.Order.OrderItems[i]);
+end;
+
 class function TIDSConnect.WaitForResult(const _Url: String;
-  _Warenkorb: TIDSConnect_Warenkorb; _TimeoutSec: Integer): Boolean;
+  _Warenkorb: TIDSConnect_Warenkorb; _TimeoutSec: Integer;
+  _MultipleResult: Boolean): Boolean;
 var
   lReported : Boolean;
+  lBuffer : TIDSConnect_Warenkorb;
 begin
   //Frueher stand hier ein TaskMessageDlg mit genau einem Abrufversuch
   //danach: war der Warenkorb noch nicht angekommen, scheiterte der Vorgang
   //ohne Wiederholung und ohne Diagnose.
   lReported := false;
-  Result := TIDSConnectDlgWait.Execute(
-              'Warte auf Abschluss',
-              'Bitte schliessen Sie den Vorgang im Browser ab.'+sLineBreak+
-              'Der Warenkorb wird danach automatisch uebernommen.',
-              _TimeoutSec,
-              function : Boolean
-              var
-                lError : String;
-              begin
-                Result := TryFetchResult(_Url,_Warenkorb,lError);
-                //Eine dauerhafte Stoerung nur einmal melden, nicht bei
-                //jedem Abrufversuch
-                if (not Result) and (lError <> '') and (not lReported) then
+
+  if not _MultipleResult then
+  begin
+    Result := TIDSConnectDlgWait.Execute(
+                'Warte auf Abschluss',
+                'Bitte schliessen Sie den Vorgang im Browser ab.'+sLineBreak+
+                'Der Warenkorb wird danach automatisch uebernommen.',
+                _TimeoutSec,
+                function : TIDSConnectPollResult
+                var
+                  lError : String;
                 begin
-                  lReported := true;
-                  ReportError('Der Abruf von '+_Url+' ist fehlgeschlagen: '+lError,nil);
-                end;
-              end);
+                  if TryFetchResult(_Url,_Warenkorb,lError) then
+                    Result := idsPollFinished
+                  else
+                  begin
+                    Result := idsPollNothing;
+                    //Eine dauerhafte Stoerung nur einmal melden, nicht bei
+                    //jedem Abrufversuch
+                    if (lError <> '') and (not lReported) then
+                    begin
+                      lReported := true;
+                      ReportError('Der Abruf von '+_Url+' ist fehlgeschlagen: '+lError,nil);
+                    end;
+                  end;
+                end);
+    exit;
+  end;
+
+  //Mehrfachrueckgabe (ab IDS 2.5.1): Der Shop darf mehrfach an die Hook-URL
+  //senden. Jede Rueckgabe wird eingelesen und an den Warenkorb angehaengt,
+  //bis der Anwender den Vorgang beendet oder die Frist abgelaufen ist.
+  //LoadFromStream leert den Zielwarenkorb, deshalb wird ueber einen
+  //Zwischenpuffer gelesen und anschliessend zusammengefuehrt.
+  _Warenkorb.Clear;
+  lBuffer := TIDSConnect_Warenkorb.Create;
+  try
+    Result := TIDSConnectDlgWait.Execute(
+                'Warte auf Abschluss',
+                'Sie koennen nacheinander mehrere Artikel uebernehmen.'+sLineBreak+
+                'Schliessen Sie den Vorgang mit "Fertig" ab.',
+                _TimeoutSec,
+                function : TIDSConnectPollResult
+                var
+                  lError : String;
+                begin
+                  Result := idsPollNothing;
+                  if TryFetchResult(_Url,lBuffer,lError) then
+                  begin
+                    MergeOrderItems(lBuffer,_Warenkorb);
+                    //Weiter warten - es koennen noch Rueckgaben folgen
+                    Result := idsPollReceived;
+                  end else
+                  if (lError <> '') and (not lReported) then
+                  begin
+                    lReported := true;
+                    ReportError('Der Abruf von '+_Url+' ist fehlgeschlagen: '+lError,nil);
+                  end;
+                end);
+  finally
+    lBuffer.Free;
+  end;
 end;
 
 class function TIDSConnect.BuildFormHeader(const _Title: String): String;
@@ -1761,7 +1832,9 @@ end;
 
 class function TIDSConnect.ShowFormAndFetch(_Form: TStrings; const _TmpFilename,
   _ResultUrl: String; _Warenkorb: TIDSConnect_Warenkorb;
-  _TimeoutSec: Integer): Boolean;
+  _TimeoutSec: Integer; _MultipleResult: Boolean): Boolean;
+var
+  lBuffer : TIDSConnect_Warenkorb;
 begin
   Result := false;
 
@@ -1772,11 +1845,30 @@ begin
     //Warte-Dialog noetig.
     TIDSConnectDlgWebBrowser.ShowDialog(_Form.Text,'',HookUrlBase);
     if _ResultUrl = '' then
-      Result := true
-    else
-      //Auch wenn der Anwender das Fenster von Hand geschlossen hat, kann der
-      //Warenkorb bereits uebertragen worden sein
+    begin
+      Result := true;
+      exit;
+    end;
+    //Auch wenn der Anwender das Fenster von Hand geschlossen hat, kann der
+    //Warenkorb bereits uebertragen worden sein
+    if not _MultipleResult then
+    begin
       Result := TryFetchResult(_ResultUrl,_Warenkorb);
+      exit;
+    end;
+    //Bei Mehrfachrueckgabe koennen im integrierten Browser mehrere Rueckgaben
+    //aufgelaufen sein; sie werden nacheinander abgeholt und zusammengefuehrt.
+    _Warenkorb.Clear;
+    lBuffer := TIDSConnect_Warenkorb.Create;
+    try
+      while TryFetchResult(_ResultUrl,lBuffer) do
+      begin
+        MergeOrderItems(lBuffer,_Warenkorb);
+        Result := true;
+      end;
+    finally
+      lBuffer.Free;
+    end;
     exit;
   end;
 
@@ -1788,7 +1880,7 @@ begin
   if _ResultUrl = '' then
     Result := true
   else
-    Result := WaitForResult(_ResultUrl,_Warenkorb,_TimeoutSec);
+    Result := WaitForResult(_ResultUrl,_Warenkorb,_TimeoutSec,_MultipleResult);
 end;
 
 class procedure TIDSConnect.IDSConnectADT(const _ServiceURL, _Cst, _UN, _Pwd,
@@ -1864,7 +1956,7 @@ begin
     //Leerer Dateiname bedeutet: im integrierten Browser anzeigen.
     //Beim externen Browser wird mit Fortschrittsdialog gewartet;
     //_HookUrlTimeout ist der IDS-2.5.1-Parameter hookURLTimeout.
-    Result := ShowFormAndFetch(hstrl,_TmpFilename,HookUrlWithSid(sid),_Warenkorb,_HookUrlTimeout);
+    Result := ShowFormAndFetch(hstrl,_TmpFilename,HookUrlWithSid(sid),_Warenkorb,_HookUrlTimeout,_MultipleResult);
   finally
     hstrl.Free;
   end;

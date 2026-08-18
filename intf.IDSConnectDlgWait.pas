@@ -25,9 +25,17 @@ uses
   Vcl.ExtCtrls, Vcl.ComCtrls;
 
 type
-  //Wird im Polling-Intervall aufgerufen. Liefert true, sobald die
-  //Rueckuebertragung eingetroffen und verarbeitet ist.
-  TIDSConnectPollEvent = reference to function : Boolean;
+  //Ergebnis eines Abrufversuchs
+  TIDSConnectPollResult = (
+    idsPollNothing,   //noch nichts eingetroffen, weiter warten
+    idsPollReceived,  //etwas eingetroffen, aber es koennen weitere Rueckgaben
+                      //folgen (Mehrfachrueckgabe ab IDS 2.5.1). Die Frist
+                      //beginnt dabei von vorn - der Parameter hookURLTimeout
+                      //bezieht sich laut Doku auf die letzte Uebertragung.
+    idsPollFinished); //fertig, der Dialog wird geschlossen
+
+  //Wird im Polling-Intervall aufgerufen
+  TIDSConnectPollEvent = reference to function : TIDSConnectPollResult;
 
   //Warte-Dialog fuer die Rueck-Kommunikation ueber die Hook-URL.
   //Ersetzt den frueheren TaskMessageDlg, nach dem genau ein einziger
@@ -44,13 +52,20 @@ type
     FTimeoutSec : Integer;
     FBusy : Boolean;
     FCaptionBase : String;
+    FReceived : Integer;
+    FBaseText : String;
     procedure DoTimer(Sender : TObject);
     procedure DoCancel(Sender : TObject);
     procedure UpdateCaption;
   public
+    //Anzahl der bereits uebernommenen Rueckgaben
+    property Received : Integer read FReceived;
     constructor CreateNew(AOwner: TComponent; Dummy: Integer = 0); override;
     //_TimeoutSec entspricht dem IDS-2.5.1-Parameter hookURLTimeout.
     //_IntervalMS bestimmt, wie oft die Hook-URL abgefragt wird.
+    //Liefert true, wenn mindestens eine Rueckgabe uebernommen wurde - auch
+    //dann, wenn der Anwender anschliessend abgebrochen hat oder die Frist
+    //abgelaufen ist.
     class function Execute(const _Caption,_Text : String; _TimeoutSec : Integer;
                            _OnPoll : TIDSConnectPollEvent;
                            _IntervalMS : Integer = 2000) : Boolean;
@@ -99,7 +114,12 @@ end;
 procedure TIDSConnectDlgWait.DoCancel(Sender: TObject);
 begin
   FTimer.Enabled := false;
-  ModalResult := mrCancel;
+  //Wurde bereits etwas uebernommen, ist der Abbruch trotzdem ein Erfolg -
+  //bei der Mehrfachrueckgabe beendet der Anwender den Vorgang selbst
+  if FReceived > 0 then
+    ModalResult := mrOk
+  else
+    ModalResult := mrCancel;
 end;
 
 procedure TIDSConnectDlgWait.UpdateCaption;
@@ -109,11 +129,19 @@ begin
   lRest := SecondsBetween(Now,FDeadline);
   if Now > FDeadline then
     lRest := 0;
-  FCancelBtn.Caption := 'Abbrechen';
   if FTimeoutSec > 0 then
   begin
     FProgress.Position := 100 - Round(lRest / FTimeoutSec * 100);
     Caption := Format('%s (noch %d s)',[FCaptionBase,lRest]);
+  end;
+  if FReceived > 0 then
+  begin
+    FCancelBtn.Caption := 'Fertig';
+    if FReceived = 1 then
+      FLabel.Caption := FBaseText+sLineBreak+sLineBreak+'1 Rückgabe übernommen.'
+    else
+      FLabel.Caption := FBaseText+sLineBreak+sLineBreak+
+                        Format('%d Rückgaben übernommen.',[FReceived]);
   end;
 end;
 
@@ -124,17 +152,33 @@ begin
     exit;
   FBusy := true;
   try
-    if Assigned(FOnPoll) and FOnPoll then
-    begin
-      FTimer.Enabled := false;
-      ModalResult := mrOk;
+    if not Assigned(FOnPoll) then
       exit;
+    case FOnPoll() of
+      idsPollFinished:
+        begin
+          Inc(FReceived);
+          FTimer.Enabled := false;
+          ModalResult := mrOk;
+          exit;
+        end;
+      idsPollReceived:
+        begin
+          //Weitere Rueckgaben moeglich: die Frist beginnt von vorn
+          Inc(FReceived);
+          if FTimeoutSec > 0 then
+            FDeadline := IncSecond(Now,FTimeoutSec);
+        end;
     end;
 
     if (FTimeoutSec > 0) and (Now > FDeadline) then
     begin
       FTimer.Enabled := false;
-      ModalResult := mrAbort;
+      //Bereits uebernommene Rueckgaben zaehlen als Erfolg
+      if FReceived > 0 then
+        ModalResult := mrOk
+      else
+        ModalResult := mrAbort;
       exit;
     end;
     UpdateCaption;
@@ -160,6 +204,7 @@ begin
     lDlg.Caption := _Caption;
     lDlg.FCaptionBase := _Caption;
     lDlg.FLabel.Caption := _Text;
+    lDlg.FBaseText := _Text;
     lDlg.FOnPoll := _OnPoll;
     lDlg.FTimeoutSec := _TimeoutSec;
     if _TimeoutSec > 0 then
@@ -173,7 +218,8 @@ begin
     lDlg.FTimer.Interval := _IntervalMS;
     lDlg.FTimer.Enabled := true;
     lDlg.UpdateCaption;
-    Result := lDlg.ShowModal = mrOk;
+    lDlg.ShowModal;
+    Result := lDlg.FReceived > 0;
   finally
     lDlg.Free;
   end;
