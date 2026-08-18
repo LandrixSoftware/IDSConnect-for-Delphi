@@ -57,7 +57,12 @@ type
     class function HookUrlWithSid(const _Sid : String) : String;
     //Ein einzelner, stiller Abrufversuch. Liefert nur dann true, wenn
     //tatsaechlich ein Warenkorb angekommen ist und gelesen werden konnte.
-    class function TryFetchResult(const _Url : String;_Warenkorb : TIDSConnect_Warenkorb) : Boolean;
+    class function TryFetchResult(const _Url : String;_Warenkorb : TIDSConnect_Warenkorb;
+                                  out _Error : String) : Boolean; overload;
+    class function TryFetchResult(const _Url : String;_Warenkorb : TIDSConnect_Warenkorb) : Boolean; overload;
+    //Basisadresse der Hook-URL ohne Query - daran erkennt der integrierte
+    //Browser, dass die Rueck-Kommunikation abgeschlossen ist
+    class function HookUrlBase : String;
     //Wartet mit Fortschrittsdialog, bis die Rueckuebertragung eingetroffen
     //ist, der Anwender abbricht oder das Timeout ablaeuft.
     class function WaitForResult(const _Url : String;_Warenkorb : TIDSConnect_Warenkorb;
@@ -66,6 +71,11 @@ type
     class function HiddenField(const _Name,_Value : String; _MaxLength : Integer = 0) : String;
     class function SaveFormToFile(_Form : TStrings; const _TmpFilename : String) : Boolean;
     class function OpenInBrowser(const _TmpFilename : String) : Boolean;
+    //Zeigt das Formular an und holt anschliessend das Ergebnis ab.
+    //_TmpFilename = '' -> integrierter Browser, sonst externer Browser ueber
+    //eine temporaere Datei. _ResultUrl = '' -> es wird kein Ergebnis erwartet.
+    class function ShowFormAndFetch(_Form : TStrings; const _TmpFilename,_ResultUrl : String;
+                                    _Warenkorb : TIDSConnect_Warenkorb; _TimeoutSec : Integer) : Boolean;
   public
     class procedure IDSConnectADT(const _ServiceURL,_Cst,_UN,_Pwd,_ArtNr,_TmpFilename : String);
     class function  IDSConnectWKE(const _ServiceURL,_Cst,_UN,_Pwd,_TmpFilename : String;_Warenkorb : TIDSConnect_Warenkorb) : Boolean;
@@ -1602,14 +1612,25 @@ begin
     Result := Result+'?sid='+_Sid;
 end;
 
+class function TIDSConnect.HookUrlBase: String;
+var
+  p : Integer;
+begin
+  Result := IDSCONNECT_HOOKURL;
+  p := Pos('?',Result);
+  if p > 0 then
+    Result := Copy(Result,1,p-1);
+end;
+
 class function TIDSConnect.TryFetchResult(const _Url: String;
-  _Warenkorb: TIDSConnect_Warenkorb): Boolean;
+  _Warenkorb: TIDSConnect_Warenkorb; out _Error : String): Boolean;
 var
   str : TMemoryStream;
   http : THTTPClient;
   vcHelper : TIDSConnect.TValidateCertificatHelper;
 begin
   Result := false;
+  _Error := '';
   if (_Url = '') or (_Warenkorb = nil) then
     exit;
 
@@ -1617,7 +1638,11 @@ begin
   http := THTTPClient.Create;
   vcHelper := TIDSConnect.TValidateCertificatHelper.Create;
   try
-    http.OnValidateServerCertificate := vcHelper.DoValidateCertificateEvent;
+    //Nur zuweisen, wenn beanstandete Zertifikate akzeptiert werden sollen -
+    //siehe die Erlaeuterung bei DoValidateCertificateEvent. Ohne Zuweisung
+    //prueft Windows das Zertifikat wie gewohnt.
+    if TIDSConnect.IDSCONNECT_ALLOW_INVALID_CERT then
+      http.OnValidateServerCertificate := vcHelper.DoValidateCertificateEvent;
     //Kurze Timeouts, damit der Warte-Dialog zwischen zwei Versuchen bedienbar
     //bleibt - ein einzelner Versuch darf das Warten nicht blockieren
     http.ConnectionTimeout := 5000;
@@ -1632,9 +1657,15 @@ begin
         exit;
       Result := _Warenkorb.LoadFromStream(str);
     except
-      //Netzwerkaussetzer beenden das Warten nicht, der naechste Versuch folgt
+      //Netzwerkaussetzer beenden das Warten nicht, der naechste Versuch folgt.
+      //Der Aufrufer bekommt die Meldung aber einmalig zu sehen, damit ein
+      //dauerhaftes Problem (falsche Adresse, abgelehntes Zertifikat) nicht
+      //als endloses Warten erscheint.
       on E:Exception do
+      begin
         Result := false;
+        _Error := E.Message;
+      end;
     end;
   finally
     vcHelper.Free;
@@ -1643,20 +1674,40 @@ begin
   end;
 end;
 
+class function TIDSConnect.TryFetchResult(const _Url: String;
+  _Warenkorb: TIDSConnect_Warenkorb): Boolean;
+var
+  lError : String;
+begin
+  Result := TryFetchResult(_Url,_Warenkorb,lError);
+end;
+
 class function TIDSConnect.WaitForResult(const _Url: String;
   _Warenkorb: TIDSConnect_Warenkorb; _TimeoutSec: Integer): Boolean;
+var
+  lReported : Boolean;
 begin
   //Frueher stand hier ein TaskMessageDlg mit genau einem Abrufversuch
   //danach: war der Warenkorb noch nicht angekommen, scheiterte der Vorgang
   //ohne Wiederholung und ohne Diagnose.
+  lReported := false;
   Result := TIDSConnectDlgWait.Execute(
               'Warte auf Abschluss',
               'Bitte schliessen Sie den Vorgang im Browser ab.'+sLineBreak+
               'Der Warenkorb wird danach automatisch uebernommen.',
               _TimeoutSec,
               function : Boolean
+              var
+                lError : String;
               begin
-                Result := TryFetchResult(_Url,_Warenkorb);
+                Result := TryFetchResult(_Url,_Warenkorb,lError);
+                //Eine dauerhafte Stoerung nur einmal melden, nicht bei
+                //jedem Abrufversuch
+                if (not Result) and (lError <> '') and (not lReported) then
+                begin
+                  lReported := true;
+                  ReportError('Der Abruf von '+_Url+' ist fehlgeschlagen: '+lError,nil);
+                end;
               end);
 end;
 
@@ -1708,6 +1759,38 @@ begin
     ReportError('Der Browser konnte nicht gestartet werden ('+_TmpFilename+').',nil);
 end;
 
+class function TIDSConnect.ShowFormAndFetch(_Form: TStrings; const _TmpFilename,
+  _ResultUrl: String; _Warenkorb: TIDSConnect_Warenkorb;
+  _TimeoutSec: Integer): Boolean;
+begin
+  Result := false;
+
+  if _TmpFilename = '' then
+  begin
+    //Integrierter Browser. Der Dialog schliesst sich selbst, sobald der Shop
+    //zur Hook-URL navigiert - deshalb ist hier kein zusaetzlicher
+    //Warte-Dialog noetig.
+    TIDSConnectDlgWebBrowser.ShowDialog(_Form.Text,'',HookUrlBase);
+    if _ResultUrl = '' then
+      Result := true
+    else
+      //Auch wenn der Anwender das Fenster von Hand geschlossen hat, kann der
+      //Warenkorb bereits uebertragen worden sein
+      Result := TryFetchResult(_ResultUrl,_Warenkorb);
+    exit;
+  end;
+
+  //Externer Browser ueber eine temporaere Datei
+  if not SaveFormToFile(_Form,_TmpFilename) then
+    exit;
+  if not OpenInBrowser(_TmpFilename) then
+    exit;
+  if _ResultUrl = '' then
+    Result := true
+  else
+    Result := WaitForResult(_ResultUrl,_Warenkorb,_TimeoutSec);
+end;
+
 class procedure TIDSConnect.IDSConnectADT(const _ServiceURL, _Cst, _UN, _Pwd,
   _ArtNr, _TmpFilename: String);
 var
@@ -1732,13 +1815,8 @@ begin
     hstrl.Add(HiddenField('action','ADL',3));
     hstrl.Add(HiddenField('ghnummer',_ArtNr,35));
     hstrl.Add('</form></body></html>');
-
-    if _TmpFilename <> '' then
-    begin
-      if SaveFormToFile(hstrl,_TmpFilename) then
-        OpenInBrowser(_TmpFilename);
-    end else
-      TIDSConnectDlgWebBrowser.ShowDialog(hstrl.Text,'');
+    //Der Artikeldeeplink hat keine Rueckuebertragung, deshalb ohne Ergebnis-URL
+    ShowFormAndFetch(hstrl,_TmpFilename,'',nil,0);
   finally
     hstrl.Free;
   end;
@@ -1757,8 +1835,6 @@ begin
   if _Cst.IsEmpty and _UN.IsEmpty and _Pwd.IsEmpty then
     exit;
   if TIDSConnect.IDSCONNECT_HOOKURL = '' then
-    exit;
-  if _TmpFilename = '' then
     exit;
   if _SearchString = '' then
     exit;
@@ -1785,19 +1861,13 @@ begin
     if _HookUrlTimeout > 0 then
       hstrl.Add(HiddenField('hookURLTimeout',IntToStr(_HookUrlTimeout)));
     hstrl.Add('</form></body></html>');
-    if not SaveFormToFile(hstrl,_TmpFilename) then
-      exit;
+    //Leerer Dateiname bedeutet: im integrierten Browser anzeigen.
+    //Beim externen Browser wird mit Fortschrittsdialog gewartet;
+    //_HookUrlTimeout ist der IDS-2.5.1-Parameter hookURLTimeout.
+    Result := ShowFormAndFetch(hstrl,_TmpFilename,HookUrlWithSid(sid),_Warenkorb,_HookUrlTimeout);
   finally
     hstrl.Free;
   end;
-
-  if not OpenInBrowser(_TmpFilename) then
-    exit;
-
-  //Wartet mit Fortschrittsdialog und fragt die Hook-URL im Intervall ab.
-  //_HookUrlTimeout ist der IDS-2.5.1-Parameter hookURLTimeout; ohne Angabe
-  //wird bis zum Abbruch durch den Anwender gewartet.
-  Result := WaitForResult(HookUrlWithSid(sid),_Warenkorb,_HookUrlTimeout);
 end;
 
 class function TIDSConnect.IDSConnectWKE(const _ServiceURL, _Cst, _UN, _Pwd,
@@ -1812,8 +1882,6 @@ begin
   if _Cst.IsEmpty and _UN.IsEmpty and _Pwd.IsEmpty then
     exit;
   if TIDSConnect.IDSCONNECT_HOOKURL = '' then
-    exit;
-  if _TmpFilename = '' then
     exit;
   if _Warenkorb = nil then
     exit;
@@ -1833,17 +1901,11 @@ begin
     hstrl.Add(HiddenField('action','WKE',3));
     hstrl.Add(HiddenField('hookurl',HookUrlWithSid(sid),256));
     hstrl.Add('</form></body></html>');
-    if not SaveFormToFile(hstrl,_TmpFilename) then
-      exit;
+    //Leerer Dateiname bedeutet: im integrierten Browser anzeigen
+    Result := ShowFormAndFetch(hstrl,_TmpFilename,HookUrlWithSid(sid),_Warenkorb,IDSCONNECT_HOOKURL_TIMEOUT);
   finally
     hstrl.Free;
   end;
-
-  if not OpenInBrowser(_TmpFilename) then
-    exit;
-
-  //Wartet mit Fortschrittsdialog und fragt die Hook-URL im Intervall ab
-  Result := WaitForResult(HookUrlWithSid(sid),_Warenkorb,IDSCONNECT_HOOKURL_TIMEOUT);
 end;
 
 class function TIDSConnect.IDSConnectWKS(_ServiceURL, _Cst, _UN, _Pwd,
@@ -1860,8 +1922,6 @@ begin
   if _Cst.IsEmpty and _UN.IsEmpty and _Pwd.IsEmpty then
     exit;
   if TIDSConnect.IDSCONNECT_HOOKURL = '' then
-    exit;
-  if _TmpFilename = '' then
     exit;
   if _Warenkorb = nil then
     exit;
@@ -1891,24 +1951,16 @@ begin
     if not _DontWait then
       hstrl.Add(HiddenField('hookurl',HookUrlWithSid(sid),256));
     hstrl.Add('</form></body></html>');
-    if not SaveFormToFile(hstrl,_TmpFilename) then
-      exit;
+    //Leerer Dateiname bedeutet: im integrierten Browser anzeigen.
+    //Bei _DontWait wird keine Rueckuebertragung erwartet.
+    if _DontWait then
+      Result := ShowFormAndFetch(hstrl,_TmpFilename,'',nil,0)
+    else
+      Result := ShowFormAndFetch(hstrl,_TmpFilename,HookUrlWithSid(sid),_Warenkorb,IDSCONNECT_HOOKURL_TIMEOUT);
   finally
     hstrl.Free;
     hstr.Free;
   end;
-
-  if not OpenInBrowser(_TmpFilename) then
-    exit;
-
-  if _DontWait then
-  begin
-    Result := true;
-    exit;
-  end;
-
-  //Wartet mit Fortschrittsdialog und fragt die Hook-URL im Intervall ab
-  Result := WaitForResult(HookUrlWithSid(sid),_Warenkorb,IDSCONNECT_HOOKURL_TIMEOUT);
 end;
 
 { TIDSConnect.TValidateCertificatHelper }
@@ -1917,14 +1969,17 @@ procedure TIDSConnect.TValidateCertificatHelper.DoValidateCertificateEvent(
   const Sender: TObject; const ARequest: TURLRequest;
   const Certificate: TCertificate; var Accepted: Boolean);
 begin
-  //Hier stand bedingungslos Accepted := true - damit war die
-  //Serverauthentifizierung fuer einen Kanal abgeschaltet, ueber den
-  //Zugangsdaten, Preise und Bestelldaten laufen.
-  //Nur wenn der Anwender das ausdruecklich fuer eine Testumgebung freischaltet,
-  //wird ein nicht vertrauenswuerdiges Zertifikat akzeptiert.
-  Accepted := TIDSConnect.IDSCONNECT_ALLOW_INVALID_CERT;
-  if not Accepted then
-    TIDSConnect.ReportError('Das Serverzertifikat wurde abgelehnt: '+Certificate.Subject,nil);
+  //Wichtig: Dieses Ereignis ist keine Zertifikatspruefung.
+  //System.Net.HttpClient.Win ruft es bei JEDER HTTPS-Anfrage auf, solange
+  //keine Beanstandung vorliegt (FSecureFailureReasons = []), und gibt
+  //Accepted mit True vorbelegt herein - gedacht ist es fuer Certificate
+  //Pinning, also fuer das nachtraegliche Ablehnen an sich gueltiger
+  //Zertifikate.
+  //Der Handler wird deshalb nur noch dann zugewiesen, wenn beanstandete
+  //Zertifikate ausdruecklich akzeptiert werden sollen (Testumgebungen mit
+  //selbstsignierten Zertifikaten). Ohne Zuweisung greift die normale
+  //Pruefung des Betriebssystems.
+  Accepted := true;
 end;
 
 end.

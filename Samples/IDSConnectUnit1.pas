@@ -1,4 +1,4 @@
-unit IDSConnectUnit1;
+﻿unit IDSConnectUnit1;
 
 interface
 
@@ -74,6 +74,11 @@ end;
 
 function TMainForm.TempHtmlFilename: String;
 begin
+  //Leerer Dateiname bedeutet fuer alle Aktionen: im integrierten Browser
+  //anzeigen. Dann wird auch keine Datei mit Zugangsdaten geschrieben.
+  if CheckBox1.Checked then
+    exit('');
+
   //Die Datei enthaelt Kundennummer, Benutzername und Passwort im Klartext.
   //Sie gehoert deshalb nicht neben die EXE (dort schlaegt das Schreiben unter
   //C:\Program Files ausserdem fehl), sondern in das Benutzer-Temp-Verzeichnis.
@@ -173,8 +178,7 @@ begin
             cfg.ReadString(SelectedSection,'Username',''),
             cfg.ReadString(SelectedSection,'Password',''),
             Edit1.Text,
-            //Leerer Dateiname bedeutet: im integrierten Browser anzeigen
-            ifthen(CheckBox1.Checked,'',TempHtmlFilename));
+            TempHtmlFilename);
 end;
 
 procedure TMainForm.Button4Click(Sender: TObject);

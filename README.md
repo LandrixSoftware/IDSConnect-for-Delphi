@@ -103,11 +103,27 @@ TIDSConnect.IDSCONNECT_ONERROR :=
 ```
 
 Für Testumgebungen mit selbstsignierten Zertifikaten lässt sich die
-Zertifikatsprüfung gezielt abschalten — im Normalbetrieb bleibt sie aktiv:
+Zertifikatsprüfung gezielt abschalten — im Normalbetrieb bleibt die Prüfung des
+Betriebssystems aktiv:
 
 ```pascal
 TIDSConnect.IDSCONNECT_ALLOW_INVALID_CERT := True;
 ```
+
+## Integrierter Browser
+
+Alle vier Aktionen laufen wahlweise im Standardbrowser oder im integrierten
+Browser (`TEdgeBrowser`, benötigt die WebView2-Runtime). Gesteuert wird das über
+den Parameter `_TmpFilename`:
+
+* **gesetzt** — das Formular wird in diese Datei geschrieben und im
+  Standardbrowser geöffnet
+* **leer** — das Formular wird direkt im integrierten Browser angezeigt; es
+  entsteht keine Datei mit Zugangsdaten auf der Platte
+
+Im integrierten Browser erkennt der Dialog den Sprung auf die Hook-URL selbst
+und schließt sich; der Warenkorb wird danach abgeholt. Beim Standardbrowser
+übernimmt das der Warte-Dialog mit Polling.
 
 ## Beispielprojekt
 

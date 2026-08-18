@@ -12,7 +12,6 @@ object MainForm: TMainForm
   Font.Style = []
   OnCreate = FormCreate
   OnDestroy = FormDestroy
-  TextHeight = 13
   object Label1: TLabel
     Left = 8
     Top = 8
@@ -116,7 +115,7 @@ object MainForm: TMainForm
     Top = 28
     Width = 187
     Height = 17
-    Caption = 'Artikel-Deeplink im InApp-Browser'
+    Caption = 'InApp-Browser'
     TabOrder = 9
   end
 end
