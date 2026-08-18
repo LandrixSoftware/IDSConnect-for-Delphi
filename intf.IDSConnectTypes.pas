@@ -27,7 +27,12 @@ uses
 //Die Bezeichnungen der Klassen wurden an die XSD-Datei der Schnittstellenbeschreibung
 //angelehnt, sind also eine Mischung aus Englisch und Deutsch
 type
-  TIDSConnect_Version = (idsConnectVersion_Unkown,idsConnectVersion_2_5);
+  TIDSConnect_Version = (idsConnectVersion_Unkown,
+                         idsConnectVersion_1_3,
+                         idsConnectVersion_2_0,
+                         idsConnectVersion_2_3,
+                         idsConnectVersion_2_5,
+                         idsConnectVersion_2_5_1);
 
   //Rueckgabekennzeichen, pflicht bei Warenkorbempfang
   TIDSConnect_RueckgabeKZ = (idsConnectRKZ_None,
@@ -49,12 +54,49 @@ type
   TIDSConnect_ModeOfShipment = (idsConnectMos_Lieferung, //value="Lieferung"
                                 idsConnectMos_Abholung); //value="Abholung"
 
+  //Belegart, ab IDS 2.5.1 - Codeliste tgCodelisteReferenzType
+  TIDSConnect_ReferenzType = (idsConnectRefType_None,
+                              idsConnectRefType_220,  //Bestellung
+                              idsConnectRefType_231,  //Bestaetigung (Auftrag)
+                              idsConnectRefType_310,  //Angebot
+                              idsConnectRefType_315); //Vertrag
+
+  //Referenz auf einen Beleg in den Kopfdaten, ab IDS 2.5.1
+  TIDSConnect_Referenz = class(TObject)
+  public
+    ReferenzNumber : String;                  //Muss String 15 Belegnummer
+    ReferenzDate : TDate;                     //Muss Belegdatum
+    ReferenzType : TIDSConnect_ReferenzType;  //Muss Belegart
+    constructor Create;
+    procedure Clear; virtual;
+  end;
+
+  TIDSConnect_ReferenzList = class(TObjectList<TIDSConnect_Referenz>)
+  public
+    function AddItem : TIDSConnect_Referenz;
+  end;
+
+  //Referenz auf einen Beleg in den Positionsdaten, ab IDS 2.5.1
+  TIDSConnect_ReferenzPos = class(TIDSConnect_Referenz)
+  public
+    ReferenzLine : String; //Muss String 10 Belegposition
+    procedure Clear; override;
+  end;
+
+  TIDSConnect_ReferenzPosList = class(TObjectList<TIDSConnect_ReferenzPos>)
+  public
+    function AddItem : TIDSConnect_ReferenzPos;
+  end;
+
   TIDSConnect_OrderInfo = class(TObject)
   public
+    //Die folgenden vier Felder entfallen ab IDS 2.5.1 und werden dort durch
+    //Referenzen ersetzt. Sie werden nur noch fuer Version <= 2.5 serialisiert.
     InquiryNo : String; //Kann String 15 Anfragenummer aus der Handwerkssoftware
     OfferNo : String;  //Kann String 15 Angebotsnummer aus dem Grosshandels-System
     PartNo : String; //Kann String 15 Bestellnummer aus der Handwerkssoftware
     OrderConfNo : String; //Kann String 15 Auftragsbestaetigungsnummer Bestellnummer aus dem Grosshandels-System
+    Referenzen : TIDSConnect_ReferenzList; //Kann 0..n, ab IDS 2.5.1
     //Entweder
     DeliveryWeek : Integer; //Kann Lieferwoche Maximaler Wert: 53
     DeliveryYear : Integer; //Kann Angabe des Lieferjahres zur Lieferwoche. Maximal vier Ziffern zwischen 2000 und 2100
@@ -66,6 +108,7 @@ type
     Kommission : String; //Kann String 80
     Cur : String; //Muss String 3 Verwendet werden die Waehrungen entsprechend der Codeliste der ISO 4217
     constructor Create;
+    destructor Destroy; override;
     procedure Clear;
   end;
 
@@ -74,9 +117,12 @@ type
     Name1 : String;   //String 40
     Name2 : String;   //String 40
     Name3 : String;   //String 40
-    Name4 : String;   //String 40
-    Street : String;  //String 40
-    PCode : String;   //String 20
+    Name4 : String;   //String 40 - entfaellt ab IDS 2.5.1
+    Street : String;  //String 40 - ab IDS 2.5.1 durch Street1 ersetzt
+    Street1 : String; //String 40 - ab IDS 2.5.1
+    Street2 : String; //String 40 - ab IDS 2.5.1
+    Street3 : String; //String 40 - ab IDS 2.5.1
+    PCode : String;   //String 20, ab IDS 2.5.1 nur noch String 9
     City : String;    //String 40
     Country : String; //String 40
     ILN : String;     //String 20
@@ -108,11 +154,15 @@ type
     procedure Clear;
   end;
 
-  //Struktur zur Abbildung der Lieferadresse bzw.Abholadresse abhängig von der Versandart
+  //Struktur zur Abbildung der Lieferadresse bzw.Abholadresse abhï¿½ngig von der Versandart
   TIDSConnect_DeliveryPlaceInfo = class(TObject)
   public
     IDNo : String; //Kann String 40 ID-Nummer fuer Lieferort
     Address : TIDSConnect_Address; //Kann
+    //Geo-Daten ab IDS 2.5.1; nur wenn HasGeoLocation gesetzt ist werden sie ausgegeben
+    HasGeoLocation : Boolean;
+    GeoLat : double;  //Kann Breitengrad -90.0 bis 90.0 Grad
+    GeoLang : double; //Kann Laengengrad -180.0 bis 180.0 Grad (Elementname laut XSD "GeoLang")
     constructor Create;
     destructor Destroy; override;
     procedure Clear;
@@ -156,10 +206,12 @@ type
                    idsConnectR_AG,// Silber
                    idsConnectR_W, // Wolfram
                    idsConnectR_ZN,// Zink
-                   idsConnectR_SN // Zinn
+                   idsConnectR_SN,// Zinn
+                   idsConnectR_MS,// Messing   - ab IDS 2.5.1
+                   idsConnectR_MK // MK Kupfer - ab IDS 2.5.1
                    );
 
-  //Struktur zur Abbildung der Rohstoffanteile für NE-Metalle
+  //Struktur zur Abbildung der Rohstoffanteile fï¿½r NE-Metalle
   TIDSConnect_Rohstoffanteil = class(TObject)
   public
     Rohstoff : TIDSConnect_Rohstoff;//Kann Angabe des Rohstoffs zu dem Daten uebertragen werden sollen (siehe Anhang).Erlaubt sind die Werte der Codeliste Rohstoffe (siehe Anhang) K Einfach STRING 3 Order/OrderItem/Rohstoffanteil/Rohstoff
@@ -168,7 +220,7 @@ type
     Basiswert : double; //Kann Angabe des Basiswerts auf den sich der Gewichtsanteil bezieht (siehe Anhang)K Einfach DEZIMAL10,4Order/OrderItem/Rohstoffanteil/Basiswert
     Basiseinheit  : TIDSConnect_QU;//Kann Angabe der Basiseinheit auf die sich der Gewichtsanteil bezieht (siehe Anhang).Erlaubt sind die Werte der Codeliste Mengeneinheiten(siehe Anhang) K Einfach STRING 3 Order/OrderItem/Rohstoffanteil/Basiseinheit
     Basisnotierung : double;//Kann Basis DEL-Notierung K Einfach DEZIMAL10,4Order/OrderItem/Rohstoffanteil/
-    NotierungAktuell : double;//Kann Aktuelle DEL-Notierung Beinhaltet die DEL-Notierung, mit der der Nettopreisberechnet wurde; muss nicht der aktuellen DEL-Notierungentsprechen, da ggf. für Kontingente fixiert.K Einfach DEZIMAL10,4Order/OrderItem/Rohstoffanteil/
+    NotierungAktuell : double;//Kann Aktuelle DEL-Notierung Beinhaltet die DEL-Notierung, mit der der Nettopreisberechnet wurde; muss nicht der aktuellen DEL-Notierungentsprechen, da ggf. fï¿½r Kontingente fixiert.K Einfach DEZIMAL10,4Order/OrderItem/Rohstoffanteil/
     constructor Create;
     procedure Clear;
   end;
@@ -210,6 +262,10 @@ type
     Zuschlag : double; //Kann Decimal 10,4
     Rohstoffanteile : TIDSConnect_RohstoffanteilList; //Kann
     Divers : Boolean; //Kann
+    //ab IDS 2.5.1
+    SumMaterialSurcharges : double; //Kann Decimal 10,4 Summe aller Rohstoffzuschlaege bezogen auf die angefragte Menge und die aktuelle Notierung
+    DiscountableAmount : double;    //Kann Decimal 10,4 skontofaehiger Betrag bezogen auf die angefragte Menge inkl. aller Zuschlaege und Rabatte
+    Referenzen : TIDSConnect_ReferenzPosList; //Kann 0..n
     constructor Create;
     destructor Destroy; override;
     procedure Clear;
@@ -258,14 +314,61 @@ begin
   Date        := 0;
   Time        := 0;
   RueckgabeKZ := idsConnectRKZ_None;
-  Version     := idsConnectVersion_2_5;
+  //Standard ist die aktuelle Schnittstellenversion. Wer weiterhin nach 2.5
+  //serialisieren will, setzt Version explizit auf idsConnectVersion_2_5.
+  Version     := idsConnectVersion_2_5_1;
+end;
+
+{ TIDSConnect_Referenz }
+
+constructor TIDSConnect_Referenz.Create;
+begin
+  Clear;
+end;
+
+procedure TIDSConnect_Referenz.Clear;
+begin
+  ReferenzNumber := '';
+  ReferenzDate := 0;
+  ReferenzType := idsConnectRefType_None;
+end;
+
+{ TIDSConnect_ReferenzList }
+
+function TIDSConnect_ReferenzList.AddItem: TIDSConnect_Referenz;
+begin
+  Result := TIDSConnect_Referenz.Create;
+  Add(Result);
+end;
+
+{ TIDSConnect_ReferenzPos }
+
+procedure TIDSConnect_ReferenzPos.Clear;
+begin
+  inherited;
+  ReferenzLine := '';
+end;
+
+{ TIDSConnect_ReferenzPosList }
+
+function TIDSConnect_ReferenzPosList.AddItem: TIDSConnect_ReferenzPos;
+begin
+  Result := TIDSConnect_ReferenzPos.Create;
+  Add(Result);
 end;
 
 { TIDSConnect_OrderInfo }
 
 constructor TIDSConnect_OrderInfo.Create;
 begin
+  Referenzen := TIDSConnect_ReferenzList.Create;
   Clear;
+end;
+
+destructor TIDSConnect_OrderInfo.Destroy;
+begin
+  if Assigned(Referenzen) then begin Referenzen.Free; Referenzen := nil; end;
+  inherited;
 end;
 
 procedure TIDSConnect_OrderInfo.Clear;
@@ -274,6 +377,7 @@ begin
   OfferNo := '';
   PartNo := '';
   OrderConfNo := '';
+  Referenzen.Clear;
   DeliveryWeek := 0;
   DeliveryYear := 0;
   DeliveryDate := 0;
@@ -297,6 +401,9 @@ begin
   Name3 := '';
   Name4 := '';
   Street := '';
+  Street1 := '';
+  Street2 := '';
+  Street3 := '';
   PCode := '';
   City := '';
   Country := '';
@@ -365,6 +472,9 @@ procedure TIDSConnect_DeliveryPlaceInfo.Clear;
 begin
   IDNo := '';
   Address.Clear;
+  HasGeoLocation := false;
+  GeoLat := 0;
+  GeoLang := 0;
 end;
 
 { TIDSConnect_Rohstoffanteil }
@@ -398,12 +508,14 @@ end;
 constructor TIDSConnect_OrderItem.Create;
 begin
   Rohstoffanteile := TIDSConnect_RohstoffanteilList.Create;
+  Referenzen := TIDSConnect_ReferenzPosList.Create;
   Clear;
 end;
 
 destructor TIDSConnect_OrderItem.Destroy;
 begin
   if Assigned(Rohstoffanteile) then begin  Rohstoffanteile.Free; Rohstoffanteile := nil; end;
+  if Assigned(Referenzen) then begin Referenzen.Free; Referenzen := nil; end;
   inherited;
 end;
 
@@ -433,6 +545,9 @@ begin
   Zuschlag := 0;
   Rohstoffanteile.Clear;
   Divers := false;
+  SumMaterialSurcharges := 0;
+  DiscountableAmount := 0;
+  Referenzen.Clear;
 end;
 
 { TIDSConnect_OrderItemList }
@@ -486,6 +601,7 @@ constructor TIDSConnect_Warenkorb.Create;
 begin
   WarenkorbInfo := TIDSConnect_WarenkorbInfo.Create;
   Order := TIDSConnect_Order.Create;
+  Clear;
 end;
 
 destructor TIDSConnect_Warenkorb.Destroy;

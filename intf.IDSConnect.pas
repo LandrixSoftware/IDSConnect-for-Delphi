@@ -21,14 +21,51 @@ interface
 
 uses
   System.SysUtils,System.Classes,System.Contnrs,System.DateUtils
-  ,System.StrUtils,System.Types,System.Generics.Collections
+  ,System.StrUtils,System.Types,System.Generics.Collections,System.UITypes
   ,Vcl.Dialogs, WinApi.ShellAPI, WinApi.Windows,Vcl.Controls
   ,System.Net.HttpClient,System.Net.URLClient,System.Net.Mime
   ,Xml.XMLIntf, Xml.XMLDoc, Xml.xmldom
-  ,intf.IDSConnectTypes
+  ,intf.IDSConnectTypes,intf.IDSConnectDlgWebBrowser
   ;
 
 type
+  TIDSConnectOnException = reference to procedure (const _Message : String; _E : Exception);
+
+  TIDSConnect = class(TObject)
+  public class var
+    IDSCONNECT_HOOKURL : String;
+    //Nur fuer Testumgebungen mit selbstsignierten Zertifikaten auf true setzen.
+    //Im Normalbetrieb bleibt die Zertifikatspruefung des Betriebssystems aktiv.
+    IDSCONNECT_ALLOW_INVALID_CERT : Boolean;
+    //Optionaler Fehler-Callback. Fruehere Versionen haben Parser- und
+    //Netzwerkfehler in leeren except-Bloecken verschluckt.
+    IDSCONNECT_ONERROR : TIDSConnectOnException;
+  private type
+    TValidateCertificatHelper = class(TObject)
+      procedure DoValidateCertificateEvent(const Sender: TObject;
+                   const ARequest: TURLRequest; const Certificate: TCertificate;
+                   var Accepted: Boolean);
+    end;
+  private
+    class procedure ReportError(const _Message : String; _E : Exception);
+    class function GetUuid : String;
+    class function GetStreamFromUrl(const _URL : String; _Result : TStream; _OnReceiveData: TReceiveDataEvent; _OnError : TIDSConnectOnException) : Boolean;
+    class function HookUrlWithSid(const _Sid : String) : String;
+    class function BuildFormHeader(const _Title : String) : String;
+    class function HiddenField(const _Name,_Value : String; _MaxLength : Integer = 0) : String;
+    class function SaveFormToFile(_Form : TStrings; const _TmpFilename : String) : Boolean;
+    class function OpenInBrowser(const _TmpFilename : String) : Boolean;
+  public
+    class procedure IDSConnectADT(const _ServiceURL,_Cst,_UN,_Pwd,_ArtNr,_TmpFilename : String);
+    class function  IDSConnectWKE(const _ServiceURL,_Cst,_UN,_Pwd,_TmpFilename : String;_Warenkorb : TIDSConnect_Warenkorb) : Boolean;
+    class function  IDSConnectWKS(_ServiceURL,_Cst,_UN,_Pwd,_TmpFilename : String;_Warenkorb : TIDSConnect_Warenkorb;_DontWait : Boolean = false) : Boolean;
+    //_MultipleResult und _HookUrlTimeout sind ab IDS 2.5.1 definiert:
+    //_MultipleResult = true  -> die Handwerkssoftware unterstuetzt mehrfache Uebertragungen an die HookUrl
+    //_HookUrlTimeout > 0     -> Angabe in Sekunden, wie lange die HookUrl aktiv bleibt
+    class function  IDSConnectAS(_ServiceURL,_Cst,_UN,_Pwd,_TmpFilename,_SearchString : String;_Warenkorb : TIDSConnect_Warenkorb;
+                                 _MultipleResult : Boolean = false;_HookUrlTimeout : Integer = 0) : Boolean;
+  end;
+
   TIDSConnectHelper = class(TObject)
   public
     class function RohstoffStrToRohstoff(const _Val: String): TIDSConnect_Rohstoff;
@@ -47,6 +84,15 @@ type
     class function StrToTechnClarification(const _Val: String) : TIDSConnect_TechnClarification;
     class function TechnClarificationToStr(_Val: TIDSConnect_TechnClarification) : String;
     class function StrMaxLength(const _Str: String; const _MaxLength: integer): String;
+    class function ReferenzTypeFromStr(const _Val: String): TIDSConnect_ReferenzType;
+    class function ReferenzTypeToStr(const _Val: TIDSConnect_ReferenzType): String;
+    //Maskiert die fuer XML-Textinhalte und Attributwerte kritischen Zeichen
+    class function XmlEscape(const _Val : String) : String;
+    //Maskiert HTML-Sonderzeichen; noetig, weil das erzeugte XML in ein
+    //<textarea> bzw. in value="..." eines HTML-Formulars eingebettet wird
+    class function HtmlEscape(const _Val : String) : String;
+    //Kuerzt auf _MaxLength und maskiert anschliessend fuer XML
+    class function XmlText(const _Str: String; const _MaxLength: integer): String;
   end;
 
   TIDSConnect_WarenkorbHelper = class helper for TIDSConnect_Warenkorb
@@ -61,6 +107,7 @@ type
     function  idsOrder(_Node : IXMLNode; _Obj : TIDSConnect_Order) : Boolean;
     function  idsOrderInfo(_Node : IXMLNode;_Obj : TIDSConnect_OrderInfo) : Boolean;
     function  idsOrderItem(_Node : IXMLNode;_Obj : TIDSConnect_OrderItemList) : Boolean;
+    function  idsReferenz(_Node : IXMLNode;_Obj : TIDSConnect_Referenz) : Boolean;
     function  idsRohstoffanteil(_Node : IXMLNode;_Obj : TIDSConnect_RohstoffanteilList) : Boolean;
     function  idsRefItems(_Node : IXMLNode;_Obj : TIDSConnect_OrderItem) : Boolean;
     function  idsSupplierInfo(_Node : IXMLNode;_Obj : TIDSConnect_SupplierInfo) : Boolean;
@@ -74,33 +121,16 @@ type
     //function SaveToFile(_Options : TIDS_Warenkorb_GenerateOptions;_Filename : String) : Boolean;
   end;
 
-  TIDSConnectOnException = reference to procedure (const _Message : String; _E : Exception);
-
-  TIDSConnect = class(TObject)
-  public class var
-    IDSCONNECT_HOOKURL : String;
-  private type
-    TValidateCertificatHelper = class(TObject)
-      procedure DoValidateCertificateEvent(const Sender: TObject;
-                   const ARequest: TURLRequest; const Certificate: TCertificate;
-                   var Accepted: Boolean);
-    end;
-  private
-    class function GetUuid : String;
-    class function GetStreamFromUrl(const _URL : String; _Result : TStream; _OnReceiveData: TReceiveDataEvent; _OnError : TIDSConnectOnException) : Boolean;
-  public
-    class procedure IDSConnectADT(const _ServiceURL,_Cst,_UN,_Pwd,_ArtNr,_TmpFilename : String);
-    class function  IDSConnectWKE(const _ServiceURL,_Cst,_UN,_Pwd,_TmpFilename : String;_Warenkorb : TIDSConnect_Warenkorb) : Boolean;
-    class function  IDSConnectWKS(_ServiceURL,_Cst,_UN,_Pwd,_TmpFilename : String;_Warenkorb : TIDSConnect_Warenkorb;_DontWait : Boolean = false) : Boolean;
-    class function  IDSConnectAS(_ServiceURL,_Cst,_UN,_Pwd,_TmpFilename,_SearchString : String;_Warenkorb : TIDSConnect_Warenkorb) : Boolean;
-  end;
-
 implementation
 
 const
   TIDSConnect_XMLNameSpace = 'http://www.itek.de/Shop-Anbindung/Warenkorb/';
-  TIDSConnect_XMLSchemaLocationSendShoppingCart = 'http://www.itek.de/Shop-Anbindung/Warenkorb/warenkorb_senden_2_5.xsd';
-  TIDSConnect_XMLSchemaLocationReceiveShoppingCart = 'http://www.itek.de/Shop-Anbindung/Warenkorb/warenkorb_empfangen_2_5.xsd';
+  TIDSConnect_XMLSchemaSendShoppingCart_2_5      = TIDSConnect_XMLNameSpace+'warenkorb_senden_2_5.xsd';
+  TIDSConnect_XMLSchemaSendShoppingCart_2_5_1    = TIDSConnect_XMLNameSpace+'warenkorb_senden_2_5_1.xsd';
+  TIDSConnect_XMLSchemaReceiveShoppingCart_2_5   = TIDSConnect_XMLNameSpace+'warenkorb_empfangen_2_5.xsd';
+  TIDSConnect_XMLSchemaReceiveShoppingCart_2_5_1 = TIDSConnect_XMLNameSpace+'warenkorb_empfangen_2_5_1.xsd';
+  //Aktuelle Schnittstellenversion, die diese Unit erzeugt
+  TIDSConnect_CurrentVersionStr = '2.5.1';
 
 { TIDSConnectHelper }
 
@@ -132,6 +162,10 @@ begin
     Result := TIDSConnect_Rohstoff.idsConnectR_ZN else
   if SameText('SN',_Val) then
     Result := TIDSConnect_Rohstoff.idsConnectR_SN else
+  if SameText('MS',_Val) then
+    Result := TIDSConnect_Rohstoff.idsConnectR_MS else
+  if SameText('MK',_Val) then
+    Result := TIDSConnect_Rohstoff.idsConnectR_MK else
     Result := TIDSConnect_Rohstoff.idsConnectR_CU;
 end;
 
@@ -152,7 +186,58 @@ begin
     TIDSConnect_Rohstoff.idsConnectR_W  : Result := 'W';
     TIDSConnect_Rohstoff.idsConnectR_ZN : Result := 'ZN';
     TIDSConnect_Rohstoff.idsConnectR_SN : Result := 'SN';
+    TIDSConnect_Rohstoff.idsConnectR_MS : Result := 'MS';
+    TIDSConnect_Rohstoff.idsConnectR_MK : Result := 'MK';
   end;
+end;
+
+class function TIDSConnectHelper.ReferenzTypeFromStr(const _Val: String): TIDSConnect_ReferenzType;
+begin
+  if _Val = '220' then
+    Result := TIDSConnect_ReferenzType.idsConnectRefType_220 else
+  if _Val = '231' then
+    Result := TIDSConnect_ReferenzType.idsConnectRefType_231 else
+  if _Val = '310' then
+    Result := TIDSConnect_ReferenzType.idsConnectRefType_310 else
+  if _Val = '315' then
+    Result := TIDSConnect_ReferenzType.idsConnectRefType_315 else
+    Result := TIDSConnect_ReferenzType.idsConnectRefType_None;
+end;
+
+class function TIDSConnectHelper.ReferenzTypeToStr(const _Val: TIDSConnect_ReferenzType): String;
+begin
+  Result := '';
+  case _Val of
+    TIDSConnect_ReferenzType.idsConnectRefType_220 : Result := '220';
+    TIDSConnect_ReferenzType.idsConnectRefType_231 : Result := '231';
+    TIDSConnect_ReferenzType.idsConnectRefType_310 : Result := '310';
+    TIDSConnect_ReferenzType.idsConnectRefType_315 : Result := '315';
+  end;
+end;
+
+class function TIDSConnectHelper.XmlEscape(const _Val: String): String;
+begin
+  //Reihenfolge ist wichtig: & muss zuerst ersetzt werden
+  Result := _Val.Replace('&','&amp;',[rfReplaceAll])
+                .Replace('<','&lt;',[rfReplaceAll])
+                .Replace('>','&gt;',[rfReplaceAll])
+                .Replace('"','&quot;',[rfReplaceAll])
+                .Replace(#39,'&apos;',[rfReplaceAll]);
+end;
+
+class function TIDSConnectHelper.HtmlEscape(const _Val: String): String;
+begin
+  Result := _Val.Replace('&','&amp;',[rfReplaceAll])
+                .Replace('<','&lt;',[rfReplaceAll])
+                .Replace('>','&gt;',[rfReplaceAll])
+                .Replace('"','&quot;',[rfReplaceAll]);
+end;
+
+class function TIDSConnectHelper.XmlText(const _Str: String; const _MaxLength: integer): String;
+begin
+  //Erst kuerzen (die Laengenbegrenzung der XSD gilt fuer den Klartext),
+  //dann maskieren - sonst koennte eine Entity mittendrin abgeschnitten werden
+  Result := XmlEscape(StrMaxLength(_Str,_MaxLength));
 end;
 
 class function TIDSConnectHelper.StrMaxLength(const _Str: String;
@@ -164,9 +249,15 @@ begin
 end;
 
 class function TIDSConnectHelper.StrToFloat(_Val: String; _Default: double): double;
+var
+  fs : TFormatSettings;
 begin
-  _Val := ReplaceText(_Val,'.',',');
-  Result := StrToFloatDef(_Val,_Default);
+  //Die XSD schreibt den Punkt als Dezimaltrenner vor. Frueher wurde hier auf
+  //Komma umgestellt und mit den globalen FormatSettings geparst - auf Systemen
+  //mit '.' als Dezimaltrenner (en-US) wurden dadurch alle Preise und Mengen 0.
+  fs := TFormatSettings.Invariant;
+  //Ein eingestreutes Komma wird der Toleranz halber weiterhin akzeptiert
+  Result := StrToFloatDef(_Val.Replace(',','.',[rfReplaceAll]),_Default,fs);
 end;
 
 class function TIDSConnectHelper.StrToTechnClarification(
@@ -184,28 +275,66 @@ end;
 class function TIDSConnectHelper.TechnClarificationToStr(
   _Val: TIDSConnect_TechnClarification): String;
 begin
+  //idsConnectTc_None bedeutet "nicht angegeben" und darf nicht als aktives
+  //"No" ausgegeben werden - der Serializer laesst das Element dann weg
   case _Val of
     idsConnectTc_Yes: Result := 'Yes';
-    else Result := 'No' ;//idsConnectTc_No: ;
+    idsConnectTc_No:  Result := 'No';
+    else Result := '';
   end;
 end;
 
 class function TIDSConnectHelper.TimeStrToTime(const _Val: String): TTime;
+var
+  h,m,s : Word;
+  lVal : String;
+  i : Integer;
 begin
-  Result := StrToTimeDef(_Val,0);
+  //xs:time kann als 06:54:35, 06:54:35.123, 06:54:35Z oder 06:54:35+01:00
+  //ankommen. StrToTimeDef scheiterte an allem ausser dem einfachsten Fall und
+  //lieferte dann still 00:00:00 zurueck.
+  Result := 0;
+  lVal := Trim(_Val);
+  if Length(lVal) < 8 then
+    exit;
+  //Zeitzone bzw. Millisekunden abschneiden
+  i := 1;
+  while (i <= Length(lVal)) and (CharInSet(lVal[i],['0'..'9',':'])) do
+    Inc(i);
+  lVal := Copy(lVal,1,i-1);
+  if Length(lVal) < 8 then
+    exit;
+  h := StrToIntDef(Copy(lVal,1,2),99);
+  m := StrToIntDef(Copy(lVal,4,2),99);
+  s := StrToIntDef(Copy(lVal,7,2),99);
+  if (h > 23) or (m > 59) or (s > 59) then
+    exit;
+  Result := EncodeTime(h,m,s,0);
 end;
 
 class function TIDSConnectHelper.TimeToTimeStr(const _Val: TTime): String;
 begin
-  Result := TimeToStr(_Val);
+  //TimeToStr war locale-abhaengig und lieferte auf en-US z.B. "6:54:35 AM",
+  //was gegen xs:time verstoesst
+  Result := FormatDateTime('hh:nn:ss',_Val,TFormatSettings.Invariant);
 end;
 
 class function TIDSConnectHelper.VersionFromStr(
   const _Val: String): TIDSConnect_Version;
 begin
+  //Auch aeltere Versionen werden erkannt - fruehere Antworten mit
+  //<Version>1.3</Version> liefen sonst auf Unkown und erzeugten beim
+  //erneuten Senden ein leeres <Version>-Element
+  if SameText(_Val,'2.5.1') then
+    Result := TIDSConnect_Version.idsConnectVersion_2_5_1 else
   if SameText(_Val,'2.5') then
-    Result := TIDSConnect_Version.idsConnectVersion_2_5
-  else
+    Result := TIDSConnect_Version.idsConnectVersion_2_5 else
+  if SameText(_Val,'2.3') then
+    Result := TIDSConnect_Version.idsConnectVersion_2_3 else
+  if SameText(_Val,'2.0') then
+    Result := TIDSConnect_Version.idsConnectVersion_2_0 else
+  if SameText(_Val,'1.3') then
+    Result := TIDSConnect_Version.idsConnectVersion_1_3 else
     Result := TIDSConnect_Version.idsConnectVersion_Unkown;
 end;
 
@@ -213,8 +342,14 @@ class function TIDSConnectHelper.VersionToStr(
   const _Val: TIDSConnect_Version): String;
 begin
   case _val of
-    idsConnectVersion_2_5: Result := '2.5';
-    else Result := '';
+    idsConnectVersion_1_3:   Result := '1.3';
+    idsConnectVersion_2_0:   Result := '2.0';
+    idsConnectVersion_2_3:   Result := '2.3';
+    idsConnectVersion_2_5:   Result := '2.5';
+    idsConnectVersion_2_5_1: Result := '2.5.1';
+    //Unbekannte Version: die aktuelle Version ausgeben, damit kein leeres
+    //Element entsteht, das die XSD-Enumeration verletzen wuerde
+    else Result := '2.5.1';
   end;
 end;
 
@@ -232,8 +367,8 @@ begin
     TIDSConnect_QU.idsConnectQu_KTM : Result := 'km';        // Kilometer
     TIDSConnect_QU.idsConnectQu_LTR : Result := 'l';        // Liter
     TIDSConnect_QU.idsConnectQu_MMT : Result := 'mm';        // Millimeter
-    TIDSConnect_QU.idsConnectQu_MTK : Result := 'cm';        // Quadrat-Meter
-    TIDSConnect_QU.idsConnectQu_MTQ : Result := 'qm';        // Kubik-Meter
+    TIDSConnect_QU.idsConnectQu_MTK : Result := 'qm';        // Quadrat-Meter
+    TIDSConnect_QU.idsConnectQu_MTQ : Result := 'cbm';        // Kubik-Meter
     TIDSConnect_QU.idsConnectQu_MTR : Result := 'm';        // Meter
     TIDSConnect_QU.idsConnectQu_PCE : Result := 'Stck';        // Stueck
     TIDSConnect_QU.idsConnectQu_PR  : Result := 'Paar' ;        // Paar
@@ -269,7 +404,9 @@ end;
 class function TIDSConnectHelper.DateStrToDate(const _Val: String): TDate;
 begin
   Result := 0;
-  if Length(_Val) <> 10 then
+  //xs:date erlaubt einen Zeitzonen-Zusatz (2022-11-18Z, 2022-11-18+01:00),
+  //deshalb wird nur der Datumsteil ausgewertet
+  if Length(_Val) < 10 then
     exit;
   try
     Result := EncodeDate(StrToIntDef(Copy(_Val,1,4),0),StrToIntDef(Copy(_Val,6,2),0),StrToIntDef(Copy(_Val,9,2),0));
@@ -288,8 +425,8 @@ end;
 class function TIDSConnectHelper.FloatToStr(const _Val: double;
   _Decimals: Integer): String;
 begin
-  Result := Format('%.'+IntToStr(_Decimals)+'f',[_Val]);
-  Result := ReplaceText(Result,',','.');
+  //Invariante FormatSettings statt globaler - die XSD verlangt den Punkt
+  Result := Format('%.*f',[_Decimals,_Val],TFormatSettings.Invariant);
 end;
 
 class function TIDSConnectHelper.QuStrToQu(const _Val: String): TIDSConnect_QU;
@@ -338,6 +475,7 @@ function TIDSConnect_WarenkorbHelper.idsAddress(_Node: IXMLNode;
 var
   i : Integer;
 begin
+  Result := true;
   for i := 0 to _Node.ChildNodes.Count -1 do
   begin
     if UnusedObj(_Node.ChildNodes[i]) then continue;
@@ -365,6 +503,27 @@ begin
     if SameText(_Node.ChildNodes[i].NodeName,'Street') then
     begin
       _Obj.Street := _Node.ChildNodes[i].Text;
+      //Damit Aufrufer, die nur Street1 auswerten, auch 2.5-Daten sehen
+      if _Obj.Street1 = '' then
+        _Obj.Street1 := _Obj.Street;
+      continue;
+    end;
+    //Street1..Street3 ersetzen ab IDS 2.5.1 das einzelne Street-Element
+    if SameText(_Node.ChildNodes[i].NodeName,'Street1') then
+    begin
+      _Obj.Street1 := _Node.ChildNodes[i].Text;
+      if _Obj.Street = '' then
+        _Obj.Street := _Obj.Street1;
+      continue;
+    end;
+    if SameText(_Node.ChildNodes[i].NodeName,'Street2') then
+    begin
+      _Obj.Street2 := _Node.ChildNodes[i].Text;
+      continue;
+    end;
+    if SameText(_Node.ChildNodes[i].NodeName,'Street3') then
+    begin
+      _Obj.Street3 := _Node.ChildNodes[i].Text;
       continue;
     end;
     if SameText(_Node.ChildNodes[i].NodeName,'PCode') then
@@ -409,7 +568,6 @@ begin
     end;
     //ProtocolUnknownObj(_Node.ChildNodes[i]);
   end;
-  Result := true;
 end;
 
 function TIDSConnect_WarenkorbHelper.idsCustomerInfo(_Node: IXMLNode;
@@ -417,6 +575,7 @@ function TIDSConnect_WarenkorbHelper.idsCustomerInfo(_Node: IXMLNode;
 var
   i : Integer;
 begin
+  Result := true;
   for i := 0 to _Node.ChildNodes.Count -1 do
   begin
     if UnusedObj(_Node.ChildNodes[i]) then continue;
@@ -439,7 +598,6 @@ begin
 
     //ProtocolUnknownObj(_Node.ChildNodes[i]);
   end;
-  Result := true;
 end;
 
 function TIDSConnect_WarenkorbHelper.idsDeliveryPlaceInfo(_Node: IXMLNode;
@@ -447,6 +605,7 @@ function TIDSConnect_WarenkorbHelper.idsDeliveryPlaceInfo(_Node: IXMLNode;
 var
   i : Integer;
 begin
+  Result := true;
   for i := 0 to _Node.ChildNodes.Count -1 do
   begin
     if UnusedObj(_Node.ChildNodes[i]) then continue;
@@ -466,16 +625,29 @@ begin
       end else
         continue;
     end;
+    //Geo-Daten ab IDS 2.5.1
+    if SameText(_Node.ChildNodes[i].NodeName,'GeoLat') then
+    begin
+      _Obj.GeoLat := TIDSConnectHelper.StrToFloat(_Node.ChildNodes[i].Text,0);
+      _Obj.HasGeoLocation := true;
+      continue;
+    end;
+    if SameText(_Node.ChildNodes[i].NodeName,'GeoLang') then
+    begin
+      _Obj.GeoLang := TIDSConnectHelper.StrToFloat(_Node.ChildNodes[i].Text,0);
+      _Obj.HasGeoLocation := true;
+      continue;
+    end;
 
     //ProtocolUnknownObj(_Node.ChildNodes[i]);
   end;
-  Result := true;
 end;
 
 function TIDSConnect_WarenkorbHelper.idsOrder(_Node: IXMLNode; _Obj : TIDSConnect_Order): Boolean;
 var
   i : Integer;
 begin
+  Result := true;
   for i := 0 to _Node.ChildNodes.Count -1 do
   begin
     if UnusedObj(_Node.ChildNodes[i]) then continue;
@@ -537,7 +709,42 @@ begin
 
     //ProtocolUnknownObj(_Node.ChildNodes[i]);
   end;
+end;
+
+function TIDSConnect_WarenkorbHelper.idsReferenz(_Node: IXMLNode;
+  _Obj: TIDSConnect_Referenz): Boolean;
+var
+  i : Integer;
+begin
   Result := true;
+  for i := 0 to _Node.ChildNodes.Count -1 do
+  begin
+    if UnusedObj(_Node.ChildNodes[i]) then continue;
+
+    if SameText(_Node.ChildNodes[i].NodeName,'ReferenzNumber') then
+    begin
+      _Obj.ReferenzNumber := _Node.ChildNodes[i].Text;
+      continue;
+    end;
+    if SameText(_Node.ChildNodes[i].NodeName,'ReferenzDate') then
+    begin
+      _Obj.ReferenzDate := TIDSConnectHelper.DateStrToDate(_Node.ChildNodes[i].Text);
+      continue;
+    end;
+    if SameText(_Node.ChildNodes[i].NodeName,'ReferenzType') then
+    begin
+      _Obj.ReferenzType := TIDSConnectHelper.ReferenzTypeFromStr(_Node.ChildNodes[i].Text);
+      continue;
+    end;
+    //ReferenzLine gibt es nur in den Positionsdaten
+    if SameText(_Node.ChildNodes[i].NodeName,'ReferenzLine') and (_Obj is TIDSConnect_ReferenzPos) then
+    begin
+      TIDSConnect_ReferenzPos(_Obj).ReferenzLine := _Node.ChildNodes[i].Text;
+      continue;
+    end;
+
+    //ProtocolUnknownObj(_Node.ChildNodes[i]);
+  end;
 end;
 
 function TIDSConnect_WarenkorbHelper.idsOrderInfo(_Node: IXMLNode;
@@ -545,10 +752,20 @@ function TIDSConnect_WarenkorbHelper.idsOrderInfo(_Node: IXMLNode;
 var
   i : Integer;
 begin
+  Result := true;
   for i := 0 to _Node.ChildNodes.Count -1 do
   begin
     if UnusedObj(_Node.ChildNodes[i]) then continue;
 
+    //Referenzen ersetzen ab IDS 2.5.1 InquiryNo/OfferNo/PartNo/OrderConfNo
+    if SameText(_Node.ChildNodes[i].NodeName,'Referenz') then
+    begin
+      Result := idsReferenz(_Node.ChildNodes[i],_Obj.Referenzen.AddItem);
+      if not Result then
+        break
+      else
+        continue;
+    end;
     if SameText(_Node.ChildNodes[i].NodeName,'InquiryNo') then
     begin
       _Obj.InquiryNo := _Node.ChildNodes[i].Text;
@@ -610,7 +827,6 @@ begin
 
     //ProtocolUnknownObj(_Node.ChildNodes[i]);
   end;
-  Result := true;
 end;
 
 function TIDSConnect_WarenkorbHelper.idsOrderItem(_Node: IXMLNode;
@@ -619,8 +835,8 @@ var
   i : Integer;
   itm : TIDSConnect_OrderItem;
 begin
-  itm := TIDSConnect_OrderItem.Create;
-  _Obj.Add(itm);
+  Result := true;
+  itm := _Obj.AddItem;
 
   for i := 0 to _Node.ChildNodes.Count -1 do
   begin
@@ -743,10 +959,34 @@ begin
       end else
         continue;
     end;
+    //Divers wurde bisher nie eingelesen
+    if SameText(_Node.ChildNodes[i].NodeName,'Divers') then
+    begin
+      itm.Divers := SameText(_Node.ChildNodes[i].Text,'true') or (_Node.ChildNodes[i].Text = '1');
+      continue;
+    end;
+    //ab IDS 2.5.1
+    if SameText(_Node.ChildNodes[i].NodeName,'SumMaterialSurcharges') then
+    begin
+      itm.SumMaterialSurcharges := TIDSConnectHelper.StrToFloat(_Node.ChildNodes[i].Text,0);
+      continue;
+    end;
+    if SameText(_Node.ChildNodes[i].NodeName,'DiscountableAmount') then
+    begin
+      itm.DiscountableAmount := TIDSConnectHelper.StrToFloat(_Node.ChildNodes[i].Text,0);
+      continue;
+    end;
+    if SameText(_Node.ChildNodes[i].NodeName,'Referenz') then
+    begin
+      Result := idsReferenz(_Node.ChildNodes[i],itm.Referenzen.AddItem);
+      if not Result then
+        break
+      else
+        continue;
+    end;
 
     //ProtocolUnknownObj(_Node.ChildNodes[i]);
   end;
-  Result := true;
 end;
 
 function TIDSConnect_WarenkorbHelper.idsRefItems(_Node: IXMLNode;
@@ -754,6 +994,7 @@ function TIDSConnect_WarenkorbHelper.idsRefItems(_Node: IXMLNode;
 var
   i : Integer;
 begin
+  Result := true;
   for i := 0 to _Node.ChildNodes.Count -1 do
   begin
     if UnusedObj(_Node.ChildNodes[i]) then continue;
@@ -781,7 +1022,6 @@ begin
 
     //ProtocolUnknownObj(_Node.ChildNodes[i]);
   end;
-  Result := true;
 end;
 
 function TIDSConnect_WarenkorbHelper.idsRohstoffanteil(_Node: IXMLNode;
@@ -790,8 +1030,8 @@ var
   i : Integer;
   itm : TIDSConnect_Rohstoffanteil;
 begin
-  itm := TIDSConnect_Rohstoffanteil.Create;
-  _Obj.Add(itm);
+  Result := true;
+  itm := _Obj.AddItem;
 
   for i := 0 to _Node.ChildNodes.Count -1 do
   begin
@@ -835,7 +1075,6 @@ begin
 
     //ProtocolUnknownObj(_Node.ChildNodes[i]);
   end;
-  Result := true;
 end;
 
 function TIDSConnect_WarenkorbHelper.idsSupplierInfo(_Node: IXMLNode;
@@ -843,6 +1082,7 @@ function TIDSConnect_WarenkorbHelper.idsSupplierInfo(_Node: IXMLNode;
 var
   i : Integer;
 begin
+  Result := true;
   for i := 0 to _Node.ChildNodes.Count -1 do
   begin
     if UnusedObj(_Node.ChildNodes[i]) then continue;
@@ -865,7 +1105,6 @@ begin
 
     //ProtocolUnknownObj(_Node.ChildNodes[i]);
   end;
-  Result := true;
 end;
 
 function TIDSConnect_WarenkorbHelper.idsWarenkorb(_Node: IXMLNode): Boolean;
@@ -908,6 +1147,7 @@ function TIDSConnect_WarenkorbHelper.idsWarenkorbInfo(_Node: IXMLNode;
 var
   i : Integer;
 begin
+  Result := true;
   for i := 0 to _Node.ChildNodes.Count -1 do
   begin
     if UnusedObj(_Node.ChildNodes[i]) then continue;
@@ -936,7 +1176,6 @@ begin
     end;
     //ProtocolUnknownObj(_Node.ChildNodes[i]);
   end;
-  Result := true;
 end;
 
 function TIDSConnect_WarenkorbHelper.LoadFromFile(
@@ -948,7 +1187,9 @@ begin
   var str : TMemoryStream := TMemoryStream.Create;
   try
     str.LoadFromFile(_Filename);
-    LoadFromStream(str);
+    //Der Rueckgabewert wurde hier frueher verworfen - LoadFromFile lieferte
+    //dadurch selbst bei erfolgreichem Einlesen immer false
+    Result := LoadFromStream(str);
   finally
     str.Free;
   end;
@@ -959,6 +1200,8 @@ var
   lBuffer : IXMLDocument;
   lStringList : TStringList;
   lStringStream : TStringStream;
+  lDecl : String;
+  lXml : String;
 begin
   Result := false;
   Clear;
@@ -966,24 +1209,41 @@ begin
   lBuffer := TXMLDocument.Create(nil);
 
   try
-    lStringList := TStringList.Create;
-    lStringStream := TStringStream.Create;
+    lStringList := nil;
+    lStringStream := nil;
     try
-      try
-        _Stream.Position := 0;
-        lStringStream.LoadFromStream(_Stream);
-        _Stream.Position := 0;
+      //Beide Objekte innerhalb des try anlegen, sonst leckt das erste,
+      //wenn das zweite Create fehlschlaegt
+      lStringList := TStringList.Create;
+      lStringStream := TStringStream.Create;
 
-        if Pos('encoding="ISO-8859-1"',lStringStream.DataString)>0 then
-          lStringList.LoadFromStream(_Stream)
-        else
-          lStringList.LoadFromStream(_Stream,TEncoding.UTF8);
-      except
-        on E:Exception do ;//TODO ShowMessage(E.ClassName+ ' '+e.Message);
+      _Stream.Position := 0;
+      lStringStream.LoadFromStream(_Stream);
+      _Stream.Position := 0;
+
+      //Die Encoding-Erkennung war frueher exakt auf encoding="ISO-8859-1"
+      //festgelegt; einfache Anfuehrungszeichen oder Kleinschreibung fielen
+      //dadurch faelschlich in den UTF-8-Zweig
+      lDecl := Copy(lStringStream.DataString,1,200);
+      if ContainsText(lDecl,'8859') or ContainsText(lDecl,'1252') or ContainsText(lDecl,'windows-125') then
+        lStringList.LoadFromStream(_Stream,TEncoding.ANSI)
+      else
+        lStringList.LoadFromStream(_Stream,TEncoding.UTF8);
+
+      lXml := lStringList.Text;
+      if ContainsText(lXml,'<head/>') then
+        lXml := ReplaceText(lXml,'<head/>','');
+      //MSXML lehnt einen Unicode-String ab, dessen Deklaration eine
+      //Byte-Kodierung nennt ("Switch from current encoding to specified
+      //encoding not supported") - deshalb wird die Deklaration angeglichen
+      if ContainsText(Copy(lXml,1,200),'encoding=') then
+      begin
+        lXml := ReplaceText(lXml,'encoding="ISO-8859-1"','encoding="UTF-8"');
+        lXml := ReplaceText(lXml,'encoding=''ISO-8859-1''','encoding="UTF-8"');
+        lXml := ReplaceText(lXml,'encoding="windows-1252"','encoding="UTF-8"');
+        lXml := ReplaceText(lXml,'encoding=''windows-1252''','encoding="UTF-8"');
       end;
-      if Pos('<head/>',lStringList.Text) > 0 then
-        lStringList.Text := ReplaceText(lStringList.Text,'<head/>','');
-      lBuffer.LoadFromXML(lStringList.Text);
+      lBuffer.LoadFromXML(lXml);
     finally
       lStringStream.Free;
       lStringList.Free;
@@ -995,53 +1255,129 @@ begin
     if SameText(lBuffer.DocumentElement.NodeName,'Warenkorb') then
       Result := idsWarenkorb(lBuffer.DocumentElement)
   except
-    on E:Exception do ; //TODO begin Protocol(E.Message,pet_FATAL); end;
+    on E:Exception do
+    begin
+      //Parserfehler wurden hier frueher spurlos verschluckt
+      Result := false;
+      TIDSConnect.ReportError('Der Warenkorb konnte nicht gelesen werden: '+E.Message,E);
+    end;
   end;
 end;
 
 function TIDSConnect_WarenkorbHelper.SaveToString(
   _Val: TStringBuilder): Boolean;
 var
-  i,j : Integer;
+  i : Integer;
+
+  lIs251 : Boolean;
 
   procedure OutAddress(_Obj : TIDSConnect_Address);
+  var
+    lStreet1 : String;
+    lPCodeLen : Integer;
   begin
-    if (_Obj.Name1 <> '') then _Val.AppendFormat('  '+'<Name1>%s</Name1>'+#13#10,[TIDSConnectHelper.StrMaxLength(_Obj.Name1,40)]);
-    if (_Obj.Name2 <> '') then _Val.AppendFormat('  '+'<Name2>%s</Name2>'+#13#10,[TIDSConnectHelper.StrMaxLength(_Obj.Name2,40)]);
-    if (_Obj.Name3 <> '') then _Val.AppendFormat('  '+'<Name3>%s</Name3>'+#13#10,[TIDSConnectHelper.StrMaxLength(_Obj.Name3,40)]);
-    if (_Obj.Name4 <> '') then _Val.AppendFormat('  '+'<Name4>%s</Name4>'+#13#10,[TIDSConnectHelper.StrMaxLength(_Obj.Name4,40)]);
-    if (_Obj.Street <> '') then _Val.AppendFormat('  '+'<Street>%s</Street>'+#13#10,[TIDSConnectHelper.StrMaxLength(_Obj.Street,40)]);
-    if (_Obj.PCode <> '') then _Val.AppendFormat('  '+'<PCode>%s</PCode>'+#13#10,[TIDSConnectHelper.StrMaxLength(_Obj.PCode,20)]);
-    if (_Obj.City <> '') then _Val.AppendFormat('  '+'<City>%s</City>'+#13#10,[TIDSConnectHelper.StrMaxLength(_Obj.City,40)]);
-    if (_Obj.Country <> '') then _Val.AppendFormat('  '+'<Country>%s</Country>'+#13#10,[TIDSConnectHelper.StrMaxLength(_Obj.Country,40)]);
-    if (_Obj.ILN <> '') then _Val.AppendFormat('  '+'<ILN>%s</ILN>'+#13#10,[TIDSConnectHelper.StrMaxLength(_Obj.ILN,20)]);
-    if (_Obj.Contact <> '') then _Val.AppendFormat('  '+'<Contact>%s</Contact>'+#13#10,[TIDSConnectHelper.StrMaxLength(_Obj.Contact,40)]);
-    if (_Obj.Phone <> '') then _Val.AppendFormat('  '+'<Phone>%s</Phone>'+#13#10,[TIDSConnectHelper.StrMaxLength(_Obj.Phone,20)]);
-    if (_Obj.Fax <> '') then _Val.AppendFormat('  '+'<Fax>%s</Fax>'+#13#10,[TIDSConnectHelper.StrMaxLength(_Obj.Fax,20)]);
-    if (_Obj.Email <> '') then _Val.AppendFormat('  '+'<Email>%s</Email>'+#13#10,[TIDSConnectHelper.StrMaxLength(_Obj.Email,256)]);
+    if (_Obj.Name1 <> '') then _Val.AppendFormat('  '+'<Name1>%s</Name1>'+#13#10,[TIDSConnectHelper.XmlText(_Obj.Name1,40)]);
+    if (_Obj.Name2 <> '') then _Val.AppendFormat('  '+'<Name2>%s</Name2>'+#13#10,[TIDSConnectHelper.XmlText(_Obj.Name2,40)]);
+    if (_Obj.Name3 <> '') then _Val.AppendFormat('  '+'<Name3>%s</Name3>'+#13#10,[TIDSConnectHelper.XmlText(_Obj.Name3,40)]);
+    //Name4 gibt es ab IDS 2.5.1 nicht mehr
+    if (not lIs251) and (_Obj.Name4 <> '') then
+      _Val.AppendFormat('  '+'<Name4>%s</Name4>'+#13#10,[TIDSConnectHelper.XmlText(_Obj.Name4,40)]);
+
+    //Street1 hat Vorrang; wer nur das alte Street-Feld befuellt hat, wird
+    //trotzdem korrekt serialisiert
+    lStreet1 := _Obj.Street1;
+    if lStreet1 = '' then
+      lStreet1 := _Obj.Street;
+    if lIs251 then
+    begin
+      if (lStreet1 <> '') then _Val.AppendFormat('  '+'<Street1>%s</Street1>'+#13#10,[TIDSConnectHelper.XmlText(lStreet1,40)]);
+      if (_Obj.Street2 <> '') then _Val.AppendFormat('  '+'<Street2>%s</Street2>'+#13#10,[TIDSConnectHelper.XmlText(_Obj.Street2,40)]);
+      if (_Obj.Street3 <> '') then _Val.AppendFormat('  '+'<Street3>%s</Street3>'+#13#10,[TIDSConnectHelper.XmlText(_Obj.Street3,40)]);
+    end else
+      if (lStreet1 <> '') then _Val.AppendFormat('  '+'<Street>%s</Street>'+#13#10,[TIDSConnectHelper.XmlText(lStreet1,40)]);
+
+    //Die PLZ ist ab IDS 2.5.1 auf 9 Stellen begrenzt
+    if lIs251 then
+      lPCodeLen := 9
+    else
+      lPCodeLen := 20;
+    if (_Obj.PCode <> '') then _Val.AppendFormat('  '+'<PCode>%s</PCode>'+#13#10,[TIDSConnectHelper.XmlText(_Obj.PCode,lPCodeLen)]);
+    if (_Obj.City <> '') then _Val.AppendFormat('  '+'<City>%s</City>'+#13#10,[TIDSConnectHelper.XmlText(_Obj.City,40)]);
+    if (_Obj.Country <> '') then _Val.AppendFormat('  '+'<Country>%s</Country>'+#13#10,[TIDSConnectHelper.XmlText(_Obj.Country,40)]);
+    if (_Obj.ILN <> '') then _Val.AppendFormat('  '+'<ILN>%s</ILN>'+#13#10,[TIDSConnectHelper.XmlText(_Obj.ILN,20)]);
+    if (_Obj.Contact <> '') then _Val.AppendFormat('  '+'<Contact>%s</Contact>'+#13#10,[TIDSConnectHelper.XmlText(_Obj.Contact,40)]);
+    if (_Obj.Phone <> '') then _Val.AppendFormat('  '+'<Phone>%s</Phone>'+#13#10,[TIDSConnectHelper.XmlText(_Obj.Phone,20)]);
+    if (_Obj.Fax <> '') then _Val.AppendFormat('  '+'<Fax>%s</Fax>'+#13#10,[TIDSConnectHelper.XmlText(_Obj.Fax,20)]);
+    if (_Obj.Email <> '') then _Val.AppendFormat('  '+'<Email>%s</Email>'+#13#10,[TIDSConnectHelper.XmlText(_Obj.Email,256)]);
   end;
 
+  //Referenzen gibt es erst ab IDS 2.5.1
+  procedure OutReferenz(const _Indent : String;_Obj : TIDSConnect_Referenz);
+  begin
+    if (_Obj.ReferenzNumber = '') or (_Obj.ReferenzType = idsConnectRefType_None) then
+      exit;
+    _Val.Append(_Indent+'<Referenz>'+#13#10);
+    _Val.AppendFormat(_Indent+' <ReferenzNumber>%s</ReferenzNumber>'+#13#10,[TIDSConnectHelper.XmlText(_Obj.ReferenzNumber,15)]);
+    _Val.AppendFormat(_Indent+' <ReferenzDate>%s</ReferenzDate>'+#13#10,[TIDSConnectHelper.DateToDateStr(_Obj.ReferenzDate)]);
+    _Val.AppendFormat(_Indent+' <ReferenzType>%s</ReferenzType>'+#13#10,[TIDSConnectHelper.ReferenzTypeToStr(_Obj.ReferenzType)]);
+    if (_Obj is TIDSConnect_ReferenzPos) then
+      _Val.AppendFormat(_Indent+' <ReferenzLine>%s</ReferenzLine>'+#13#10,[TIDSConnectHelper.XmlText(TIDSConnect_ReferenzPos(_Obj).ReferenzLine,10)]);
+    _Val.Append(_Indent+'</Referenz>'+#13#10);
+  end;
+
+var
+  lDate : TDate;
+  lTime : TTime;
+  lCur : String;
+  j : Integer;
 begin
+  Result := false;
+  if _Val = nil then
+    exit;
+
+  lIs251 := WarenkorbInfo.Version >= idsConnectVersion_2_5_1;
+
   _Val.Append('<?xml version="1.0" encoding="UTF-8"?>'+#13#10);
-  _Val.Append('<Warenkorb xmlns="http://www.itek.de/Shop-Anbindung/Warenkorb/" ');
-  _Val.Append('xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">'+#13#10);
-  //_Val.Append('xsi:schemaLocation="http://www.itek.de/Shop-Anbindung/Warenkorb/warenkorb_senden.xsd">'+#13#10);
+  _Val.Append('<Warenkorb xmlns="'+TIDSConnect_XMLNameSpace+'" ');
+  _Val.Append('xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" ');
+  _Val.AppendFormat('xsi:schemaLocation="%s %s">'+#13#10,
+                    [TIDSConnect_XMLNameSpace,
+                     IfThen(lIs251,TIDSConnect_XMLSchemaSendShoppingCart_2_5_1,TIDSConnect_XMLSchemaSendShoppingCart_2_5)]);
+
+  //Ohne gesetztes Datum entstand hier frueher 1899-12-30 / 00:00:00
+  lDate := WarenkorbInfo.Date;
+  if lDate = 0 then
+    lDate := Date;
+  lTime := WarenkorbInfo.Time;
+  if lTime = 0 then
+    lTime := Time;
 
   _Val.Append(' '+'<WarenkorbInfo>'+#13#10);
-  _Val.AppendFormat('  '+'<Date>%s</Date>'+#13#10,[TIDSConnectHelper.DateToDateStr(WarenkorbInfo.Date)]);
-  _Val.AppendFormat('  '+'<Time>%s</Time>'+#13#10,[TIDSConnectHelper.TimeToTimeStr(WarenkorbInfo.Time)]);
-  //<RueckgabeKZ>Warenkorbrückgabe</RueckgabeKZ> für Client nicht erforderlich
+  _Val.AppendFormat('  '+'<Date>%s</Date>'+#13#10,[TIDSConnectHelper.DateToDateStr(lDate)]);
+  _Val.AppendFormat('  '+'<Time>%s</Time>'+#13#10,[TIDSConnectHelper.TimeToTimeStr(lTime)]);
+  //<RueckgabeKZ>Warenkorbrueckgabe</RueckgabeKZ> fuer Client nicht erforderlich
   _Val.Append('  '+'<Version>'+TIDSConnectHelper.VersionToStr(WarenkorbInfo.Version)+'</Version>'+#13#10);
   _Val.Append(' '+'</WarenkorbInfo>'+#13#10);
 
   _Val.Append(' '+'<Order>'+#13#10);
 
-  //########## OderInfo
+  //########## OrderInfo
+  //Die Reihenfolge folgt der XSD: Referenz*, (DeliveryWeek+Year | DeliveryDate),
+  //ModeOfShipment, Cur, ZusatzText, Kommission. Frueher wurde Cur nach
+  //ZusatzText/Kommission ausgegeben - damit war jeder Warenkorb mit
+  //Kommission oder Zusatztext schemaungueltig.
   _Val.Append('  '+'<OrderInfo>'+#13#10);
-  if (Order.OrderInfo.InquiryNo <> '') then _Val.AppendFormat('  '+'<InquiryNo>%s</InquiryNo>'+#13#10,[TIDSConnectHelper.StrMaxLength(Order.OrderInfo.InquiryNo,15)]);
-  if (Order.OrderInfo.OfferNo <> '') then _Val.AppendFormat('  '+'<OfferNo>%s</OfferNo>'+#13#10,[TIDSConnectHelper.StrMaxLength(Order.OrderInfo.OfferNo,15)]);
-  if (Order.OrderInfo.PartNo <> '') then _Val.AppendFormat('  '+'<PartNo>%s</PartNo>'+#13#10,[TIDSConnectHelper.StrMaxLength(Order.OrderInfo.PartNo,15)]);
-  if (Order.OrderInfo.OrderConfNo <> '') then _Val.AppendFormat('  '+'<OrderConfNo>%s</OrderConfNo>'+#13#10,[TIDSConnectHelper.StrMaxLength(Order.OrderInfo.OrderConfNo,15)]);
+  if lIs251 then
+  begin
+    for j := 0 to Order.OrderInfo.Referenzen.Count-1 do
+      OutReferenz('   ',Order.OrderInfo.Referenzen[j]);
+  end else
+  begin
+    if (Order.OrderInfo.InquiryNo <> '') then _Val.AppendFormat('  '+'<InquiryNo>%s</InquiryNo>'+#13#10,[TIDSConnectHelper.XmlText(Order.OrderInfo.InquiryNo,15)]);
+    if (Order.OrderInfo.OfferNo <> '') then _Val.AppendFormat('  '+'<OfferNo>%s</OfferNo>'+#13#10,[TIDSConnectHelper.XmlText(Order.OrderInfo.OfferNo,15)]);
+    if (Order.OrderInfo.PartNo <> '') then _Val.AppendFormat('  '+'<PartNo>%s</PartNo>'+#13#10,[TIDSConnectHelper.XmlText(Order.OrderInfo.PartNo,15)]);
+    if (Order.OrderInfo.OrderConfNo <> '') then _Val.AppendFormat('  '+'<OrderConfNo>%s</OrderConfNo>'+#13#10,[TIDSConnectHelper.XmlText(Order.OrderInfo.OrderConfNo,15)]);
+  end;
   if (Order.OrderInfo.DeliveryWeek<>0) and (Order.OrderInfo.DeliveryYear<>0) then
   begin
     _Val.AppendFormat('  '+'<DeliveryWeek>%s</DeliveryWeek>'+#13#10,[IntToStr(Order.OrderInfo.DeliveryWeek)]);
@@ -1053,11 +1389,15 @@ begin
     idsConnectMos_Lieferung: _Val.Append('  '+'<ModeOfShipment>Lieferung</ModeOfShipment>'+#13#10);
     idsConnectMos_Abholung: _Val.Append('  '+'<ModeOfShipment>Abholung</ModeOfShipment>'+#13#10);
   end;
-  if (Order.OrderInfo.ZusatzText <> '') then _Val.AppendFormat('  '+'<ZusatzText>%s</ZusatzText>'+#13#10,[TIDSConnectHelper.StrMaxLength(Order.OrderInfo.ZusatzText,100)]);
-  if (Order.OrderInfo.Kommission <> '') then _Val.AppendFormat('  '+'<Kommission>%s</Kommission>'+#13#10,[TIDSConnectHelper.StrMaxLength(Order.OrderInfo.Kommission,80)]);
-  _Val.Append('  '+'<Cur>EUR</Cur>'+#13#10);
+  //Cur wurde bisher fest auf EUR gesetzt und das gepflegte Feld ignoriert
+  lCur := Trim(Order.OrderInfo.Cur);
+  if lCur = '' then
+    lCur := 'EUR';
+  _Val.AppendFormat('  '+'<Cur>%s</Cur>'+#13#10,[TIDSConnectHelper.XmlText(lCur,3)]);
+  if (Order.OrderInfo.ZusatzText <> '') then _Val.AppendFormat('  '+'<ZusatzText>%s</ZusatzText>'+#13#10,[TIDSConnectHelper.XmlText(Order.OrderInfo.ZusatzText,100)]);
+  if (Order.OrderInfo.Kommission <> '') then _Val.AppendFormat('  '+'<Kommission>%s</Kommission>'+#13#10,[TIDSConnectHelper.XmlText(Order.OrderInfo.Kommission,80)]);
   _Val.Append('  '+'</OrderInfo>'+#13#10);
-  //########## OderInfo
+  //########## OrderInfo
 //  if (_Options.OutSupplierInfo) then
 //  begin
 //    _Val.Append('  '+'<SupplierInfo>'+#13#10);
@@ -1091,23 +1431,22 @@ begin
        (Order.OrderItems[i].RefItems_Supplier <> '') or
        (Order.OrderItems[i].RefItems_SupplierSubNo <> '') then
     begin
+      //Customer und Supplier sind laut XSD innerhalb von RefItems Pflicht,
+      //deshalb werden sie immer geschrieben, sobald RefItems ausgegeben wird
       _Val.Append('  '+'<RefItems>'+#13#10);
-      if (Order.OrderItems[i].RefItems_Customer <> '') or
-         (Order.OrderItems[i].RefItems_CustomerSubNo <> '') then
-      begin
-        _Val.AppendFormat('  '+'<Customer>%s</Customer>'+#13#10,[TIDSConnectHelper.StrMaxLength(Order.OrderItems[i].RefItems_Customer,35)]);
-        _Val.AppendFormat('  '+'<CustomerSubNo>%s</CustomerSubNo>'+#13#10,[TIDSConnectHelper.StrMaxLength(Order.OrderItems[i].RefItems_CustomerSubNo,35)]);
-      end;
-      if (Order.OrderItems[i].RefItems_Supplier <> '') or
-         (Order.OrderItems[i].RefItems_SupplierSubNo <> '') then
-      begin
-        _Val.AppendFormat('  '+'<Supplier>%s</Supplier>'+#13#10,[TIDSConnectHelper.StrMaxLength(Order.OrderItems[i].RefItems_Supplier,35)]);
-        _Val.AppendFormat('  '+'<SupplierSubNo>%s</SupplierSubNo>'+#13#10,[TIDSConnectHelper.StrMaxLength(Order.OrderItems[i].RefItems_SupplierSubNo,35)]);
-      end;
+      _Val.AppendFormat('  '+'<Customer>%s</Customer>'+#13#10,[TIDSConnectHelper.XmlText(Order.OrderItems[i].RefItems_Customer,35)]);
+      if (Order.OrderItems[i].RefItems_CustomerSubNo <> '') then
+        _Val.AppendFormat('  '+'<CustomerSubNo>%s</CustomerSubNo>'+#13#10,[TIDSConnectHelper.XmlText(Order.OrderItems[i].RefItems_CustomerSubNo,35)]);
+      _Val.AppendFormat('  '+'<Supplier>%s</Supplier>'+#13#10,[TIDSConnectHelper.XmlText(Order.OrderItems[i].RefItems_Supplier,35)]);
+      if (Order.OrderItems[i].RefItems_SupplierSubNo <> '') then
+        _Val.AppendFormat('  '+'<SupplierSubNo>%s</SupplierSubNo>'+#13#10,[TIDSConnectHelper.XmlText(Order.OrderItems[i].RefItems_SupplierSubNo,35)]);
       _Val.Append('  '+'</RefItems>'+#13#10);
     end;
-    if Order.OrderItems[i].EAN <> '' then _Val.AppendFormat('  '+'<EAN>%s</EAN>'+#13#10,[TIDSConnectHelper.StrMaxLength(Order.OrderItems[i].EAN,13)]);
-    if Order.OrderItems[i].ArtNo <> '' then _Val.AppendFormat('  '+'<ArtNo>%s</ArtNo>'+#13#10,[TIDSConnectHelper.StrMaxLength(Order.OrderItems[i].ArtNo,15)]);
+    if Order.OrderItems[i].EAN <> '' then _Val.AppendFormat('  '+'<EAN>%s</EAN>'+#13#10,[TIDSConnectHelper.XmlText(Order.OrderItems[i].EAN,13)]);
+    if Order.OrderItems[i].ManufacturerID <> '' then _Val.AppendFormat('  '+'<ManufacturerID>%s</ManufacturerID>'+#13#10,[TIDSConnectHelper.XmlText(Order.OrderItems[i].ManufacturerID,40)]);
+    if Order.OrderItems[i].ManufacturerIDType <> '' then _Val.AppendFormat('  '+'<ManufacturerIDType>%s</ManufacturerIDType>'+#13#10,[TIDSConnectHelper.XmlText(Order.OrderItems[i].ManufacturerIDType,40)]);
+    //ArtNo ist laut XSD Pflicht und wird deshalb auch leer ausgegeben
+    _Val.AppendFormat('  '+'<ArtNo>%s</ArtNo>'+#13#10,[TIDSConnectHelper.XmlText(Order.OrderItems[i].ArtNo,15)]);
     _Val.AppendFormat('  '+'<Qty>%s</Qty>'+#13#10,[TIDSConnectHelper.FloatToStr(Order.OrderItems[i].Qty,2)]);
     _Val.AppendFormat('  '+'<QU>%s</QU>'+#13#10,[TIDSConnectHelper.QuToQuStr(Order.OrderItems[i].QU)]);
 //    if (not _Options.OutHWPMode) then
@@ -1139,6 +1478,17 @@ begin
 //       _Val.Append('  '+'</Rohstoffanteil>'+#13#10);
 //      end;
 //    end;
+    //ab IDS 2.5.1: Summe der Rohstoffzuschlaege, skontofaehiger Betrag und
+    //Belegreferenzen auf Positionsebene
+    if lIs251 then
+    begin
+      if Order.OrderItems[i].SumMaterialSurcharges <> 0 then
+        _Val.AppendFormat('  '+'<SumMaterialSurcharges>%s</SumMaterialSurcharges>'+#13#10,[TIDSConnectHelper.FloatToStr(Order.OrderItems[i].SumMaterialSurcharges,4)]);
+      if Order.OrderItems[i].DiscountableAmount <> 0 then
+        _Val.AppendFormat('  '+'<DiscountableAmount>%s</DiscountableAmount>'+#13#10,[TIDSConnectHelper.FloatToStr(Order.OrderItems[i].DiscountableAmount,4)]);
+      for j := 0 to Order.OrderItems[i].Referenzen.Count-1 do
+        OutReferenz('   ',Order.OrderItems[i].Referenzen[j]);
+    end;
     _Val.Append('  '+'</OrderItem>'+#13#10);
   end;
   _Val.Append(' '+'</Order>'+#13#10);
@@ -1148,10 +1498,20 @@ end;
 
 function TIDSConnect_WarenkorbHelper.UnusedObj(_Node: IXMLNode): Boolean;
 begin
-  Result := SameText(_Node.NodeName,'#text');
+  //Neben Textknoten muessen auch Kommentare und CDATA-Abschnitte uebersprungen
+  //werden, sonst laufen sie in die Elementnamen-Vergleiche
+  Result := SameText(_Node.NodeName,'#text') or
+            SameText(_Node.NodeName,'#comment') or
+            SameText(_Node.NodeName,'#cdata-section');
 end;
 
 { TIDSConnect }
+
+class procedure TIDSConnect.ReportError(const _Message: String; _E: Exception);
+begin
+  if Assigned(TIDSConnect.IDSCONNECT_ONERROR) then
+    TIDSConnect.IDSCONNECT_ONERROR(_Message,_E);
+end;
 
 class function TIDSConnect.GetStreamFromUrl(const _URL: String;
   _Result: TStream; _OnReceiveData: TReceiveDataEvent;
@@ -1163,16 +1523,27 @@ begin
   result := false;
   if _Result = nil then
     exit;
+  if _URL = '' then
+    exit;
   http := THTTPClient.Create;
   vcHelper := TIDSConnect.TValidateCertificatHelper.Create;
   try
     http.OnValidateServerCertificate := vcHelper.DoValidateCertificateEvent;
     http.OnReceiveData := _OnReceiveData;
+    //Ohne Timeouts konnte der Aufruf die Oberflaeche unbegrenzt blockieren
+    http.ConnectionTimeout := 15000;
+    http.ResponseTimeout := 60000;
     try
       with http.Get(_URL,_Result) do
         result := StatusCode = 200;
     except
-      on E:Exception do if Assigned(_OnError) then _OnError('',E);
+      on E:Exception do
+      begin
+        if Assigned(_OnError) then
+          _OnError('',E)
+        else
+          ReportError('Der Abruf von '+_URL+' ist fehlgeschlagen: '+E.Message,E);
+      end;
     end;
   finally
     vcHelper.Free;
@@ -1187,48 +1558,114 @@ begin
   System.Delete(Result,Length(Result),1);
 end;
 
+
+class function TIDSConnect.HookUrlWithSid(const _Sid: String): String;
+begin
+  Result := IDSCONNECT_HOOKURL;
+  if Result = '' then
+    exit;
+  //Enthaelt die Hook-URL bereits einen Query-String, darf kein zweites '?' folgen
+  if Pos('?',Result) > 0 then
+    Result := Result+'&sid='+_Sid
+  else
+    Result := Result+'?sid='+_Sid;
+end;
+
+class function TIDSConnect.BuildFormHeader(const _Title: String): String;
+begin
+  //Der Zeichensatz muss im HTML deklariert werden, sonst raet der Browser die
+  //Kodierung der Formulardaten. Zusammen mit accept-charset stellt das sicher,
+  //dass Umlaute als UTF-8 beim Grosshaendler ankommen - passend zur
+  //UTF-8-Deklaration des eingebetteten Warenkorb-XML.
+  Result := '<html><head>'+
+            '<meta http-equiv="Content-Type" content="text/html; charset=utf-8">'+
+            '<title>IDS-Connect Schnittstelle '+TIDSConnectHelper.HtmlEscape(_Title)+'</title>'+
+            '</head>';
+end;
+
+class function TIDSConnect.HiddenField(const _Name, _Value: String;
+  _MaxLength: Integer): String;
+begin
+  //Die Werte wurden frueher unmaskiert in value="..." eingesetzt - ein
+  //Anfuehrungszeichen im Passwort oder Suchbegriff zerlegte das Formular
+  Result := '<input type="hidden" name="'+_Name+'" value="'+TIDSConnectHelper.HtmlEscape(_Value)+'"';
+  if _MaxLength > 0 then
+    Result := Result+' size="'+IntToStr(_MaxLength)+'" maxlength="'+IntToStr(_MaxLength)+'"';
+  Result := Result+'>';
+end;
+
+class function TIDSConnect.SaveFormToFile(_Form: TStrings;
+  const _TmpFilename: String): Boolean;
+begin
+  Result := false;
+  try
+    //Frueher wurde als Codepage 1252 gespeichert, waehrend das eingebettete
+    //XML UTF-8 deklarierte. TEncoding.UTF8 ist ausserdem ein RTL-Singleton und
+    //muss - anders als TEncoding.GetEncoding(1252) - nicht freigegeben werden.
+    _Form.SaveToFile(_TmpFilename,TEncoding.UTF8);
+    Result := true;
+  except
+    on E:Exception do
+      ReportError('Die temporaere Datei '+_TmpFilename+' konnte nicht geschrieben werden: '+E.Message,E);
+  end;
+end;
+
+class function TIDSConnect.OpenInBrowser(const _TmpFilename: String): Boolean;
+begin
+  //ShellExecute meldet Fehler ueber einen Rueckgabewert <= 32; das wurde
+  //bisher ignoriert und der Anwender bekam trotzdem den Warte-Dialog
+  Result := ShellExecuteW(0,'open',PChar(_TmpFilename),'','',SW_SHOWNORMAL) > 32;
+  if not Result then
+    ReportError('Der Browser konnte nicht gestartet werden ('+_TmpFilename+').',nil);
+end;
+
 class procedure TIDSConnect.IDSConnectADT(const _ServiceURL, _Cst, _UN, _Pwd,
   _ArtNr, _TmpFilename: String);
 var
   hstrl : TStringList;
 begin
+  if _ServiceURL.IsEmpty then
+    exit;
   if _Cst.IsEmpty and _UN.IsEmpty and _Pwd.IsEmpty then
     exit;
   if _ArtNr = '' then
     exit;
-  if _TmpFilename = '' then
-    exit;
   hstrl := TStringList.Create;
   try
-    hstrl.Add('<!doctype html public "-//W3C//DTD HTML 3.2 //EN">');
-    hstrl.Add('<html><head><title>IDS-Connect Schnittstelle ADT</title></head>');
+    hstrl.Add('<!doctype html>');
+    hstrl.Add(BuildFormHeader('ADT'));
     hstrl.Add('<body onload="document.forms[''adt''].submit();">');
-    hstrl.Add('<form id="adt" name="adt" action="'+_ServiceURL+'" method="post">');
-    hstrl.Add('<input type="hidden" name="kndnr" value="'+_Cst+'" size="50" maxlength="50">');
-    hstrl.Add('<input type="hidden" name="name_kunde" value="'+_UN+'" size="50" maxlength="50">');
-    hstrl.Add('<input type="hidden" name="pw_kunde" value="'+_Pwd+'" size="50" maxlength="50">');
-    hstrl.Add('<input type="hidden" name="version" value="2.5" size="5" maxlength="5">');
-    hstrl.Add('<input type="hidden" name="action" value="ADL" size="3" maxlength="3">');
-    //hstrl.Add('<td><input type="Text" name="hookurl" value="die URL an die die Antwort gesendet wird" size="256" maxlength="256">');
-    hstrl.Add('<input type="hidden" name="ghnummer" value="'+_ArtNr+'" size="35" maxlength="35">');
-    //hstrl.Add('<input type="Submit" name="Abschicken3" value="Abschicken Artikeldeeplink">');
+    hstrl.Add('<form id="adt" name="adt" action="'+TIDSConnectHelper.HtmlEscape(_ServiceURL)+'" method="post" accept-charset="utf-8">');
+    hstrl.Add(HiddenField('kndnr',_Cst,50));
+    hstrl.Add(HiddenField('name_kunde',_UN,50));
+    hstrl.Add(HiddenField('pw_kunde',_Pwd,50));
+    hstrl.Add(HiddenField('version',TIDSConnect_CurrentVersionStr,5));
+    hstrl.Add(HiddenField('action','ADL',3));
+    hstrl.Add(HiddenField('ghnummer',_ArtNr,35));
     hstrl.Add('</form></body></html>');
 
-    hstrl.SaveToFile(_TmpFilename,TEncoding.GetEncoding(1252));
-    ShellExecuteW(0,'open',PChar(_TmpFilename),'','',SW_SHOWNORMAL);
+    if _TmpFilename <> '' then
+    begin
+      if SaveFormToFile(hstrl,_TmpFilename) then
+        OpenInBrowser(_TmpFilename);
+    end else
+      TIDSConnectDlgWebBrowser.ShowDialog(hstrl.Text,'');
   finally
     hstrl.Free;
   end;
 end;
 
 class function TIDSConnect.IDSConnectAS(_ServiceURL, _Cst, _UN, _Pwd,
-  _TmpFilename, _SearchString: String; _Warenkorb: TIDSConnect_Warenkorb): Boolean;
+  _TmpFilename, _SearchString: String; _Warenkorb: TIDSConnect_Warenkorb;
+  _MultipleResult : Boolean; _HookUrlTimeout : Integer): Boolean;
 var
   hstrl : TStringList;
   sid : String;
   str : TMemoryStream;
 begin
   Result := false;
+  if _ServiceURL.IsEmpty then
+    exit;
   if _Cst.IsEmpty and _UN.IsEmpty and _Pwd.IsEmpty then
     exit;
   if TIDSConnect.IDSCONNECT_HOOKURL = '' then
@@ -1242,28 +1679,38 @@ begin
 
   sid := TIDSConnect.GetUuid;
   hstrl := TStringList.Create;
-  hstrl.Add('<!doctype html public "-//W3C//DTD HTML 3.2 //EN">');
-  hstrl.Add('<html><head><title>IDS-Connect Schnittstelle AS</title></head>');
-  hstrl.Add('<body onload="document.forms[''search''].submit();">');
-  hstrl.Add('<form id="search" name="search" action="'+_ServiceURL+'" method="post">');
-  hstrl.Add('<input type="hidden" name="kndnr" value="'+_Cst+'" size="50" maxlength="50">');
-  hstrl.Add('<input type="hidden" name="name_kunde" value="'+_UN+'" size="50" maxlength="50">');
-  hstrl.Add('<input type="hidden" name="pw_kunde" value="'+_Pwd+'" size="50" maxlength="50">');
-  hstrl.Add('<input type="hidden" name="version" value="2.5" size="5" maxlength="5">');
-  hstrl.Add('<input type="hidden" name="searchterm" value="'+_SearchString+'">');
-  hstrl.Add('<input type="hidden" name="action" value="AS" size="3" maxlength="3">');
-  hstrl.Add('<input type="hidden" name="hookurl" value="'+IDSCONNECT_HOOKURL+'?sid='+sid +'" size="256" maxlength="256">');
-  hstrl.Add('</form></body></html>');
-  hstrl.SaveToFile(_TmpFilename,TEncoding.GetEncoding(1252));
-  hstrl.Free;
-  ShellExecuteW(0,'open',PChar(_TmpFilename),'','',SW_SHOWNORMAL);
+  try
+    hstrl.Add('<!doctype html>');
+    hstrl.Add(BuildFormHeader('AS'));
+    hstrl.Add('<body onload="document.forms[''search''].submit();">');
+    hstrl.Add('<form id="search" name="search" action="'+TIDSConnectHelper.HtmlEscape(_ServiceURL)+'" method="post" accept-charset="utf-8">');
+    hstrl.Add(HiddenField('kndnr',_Cst,50));
+    hstrl.Add(HiddenField('name_kunde',_UN,50));
+    hstrl.Add(HiddenField('pw_kunde',_Pwd,50));
+    hstrl.Add(HiddenField('version',TIDSConnect_CurrentVersionStr,5));
+    hstrl.Add(HiddenField('searchterm',_SearchString));
+    hstrl.Add(HiddenField('action','AS',3));
+    hstrl.Add(HiddenField('hookurl',HookUrlWithSid(sid),256));
+    //Beide Parameter sind ab IDS 2.5.1 fuer die Artikelsuche definiert
+    if _MultipleResult then
+      hstrl.Add(HiddenField('multipleResult','true'));
+    if _HookUrlTimeout > 0 then
+      hstrl.Add(HiddenField('hookURLTimeout',IntToStr(_HookUrlTimeout)));
+    hstrl.Add('</form></body></html>');
+    if not SaveFormToFile(hstrl,_TmpFilename) then
+      exit;
+  finally
+    hstrl.Free;
+  end;
 
+  if not OpenInBrowser(_TmpFilename) then
+    exit;
 
   if TaskMessageDlg('Warte auf Abschluss...', 'Warenkorb einlesen', mtConfirmation, mbYesNoCancel, 0) = mrYes then
   begin
     str := TMemoryStream.Create;
     try
-      if TIDSConnect.GetStreamFromUrl(TIDSConnect.IDSCONNECT_HOOKURL+'?sid='+sid,str,nil,nil) then
+      if TIDSConnect.GetStreamFromUrl(HookUrlWithSid(sid),str,nil,nil) then
         Result := _Warenkorb.LoadFromStream(str);
     finally
       str.Free;
@@ -1277,10 +1724,10 @@ var
   hstrl : TStringList;
   sid : String;
   str : TMemoryStream;
-  TaskDialog: TTaskDialog;
-  Button: TTaskDialogBaseButtonItem;
 begin
   Result := false;
+  if _ServiceURL.IsEmpty then
+    exit;
   if _Cst.IsEmpty and _UN.IsEmpty and _Pwd.IsEmpty then
     exit;
   if TIDSConnect.IDSCONNECT_HOOKURL = '' then
@@ -1292,27 +1739,33 @@ begin
 
   sid := TIDSConnect.GetUuid;
   hstrl := TStringList.Create;
-  hstrl.Add('<!doctype html public "-//W3C//DTD HTML 3.2 //EN">');
-  hstrl.Add('<html><head><title>IDS-Connect Schnittstelle WKE</title></head>');
-  hstrl.Add('<body onload="document.forms[''wke''].submit();">');
-  hstrl.Add('<form id="wke" name="wke" action="'+_ServiceURL+'" method="post">');
-  hstrl.Add('<input type="hidden" name="kndnr" value="'+_Cst+'" size="50" maxlength="50">');
-  hstrl.Add('<input type="hidden" name="name_kunde" value="'+_UN+'" size="50" maxlength="50">');
-  hstrl.Add('<input type="hidden" name="pw_kunde" value="'+_Pwd+'" size="50" maxlength="50">');
-  hstrl.Add('<input type="hidden" name="version" value="1.3" size="5" maxlength="5">');
-  hstrl.Add('<input type="hidden" name="action" value="WKE" size="3" maxlength="3">');
-  hstrl.Add('<input type="hidden" name="hookurl" value="'+TIDSConnect.IDSCONNECT_HOOKURL+'?sid='+sid +'" size="256" maxlength="256">');
-  hstrl.Add('</form></body></html>');
-  hstrl.SaveToFile(_TmpFilename,TEncoding.GetEncoding(1252));
-  hstrl.Free;
-  ShellExecuteW(0,'open',PChar(_TmpFilename),'','',SW_SHOWNORMAL);
+  try
+    hstrl.Add('<!doctype html>');
+    hstrl.Add(BuildFormHeader('WKE'));
+    hstrl.Add('<body onload="document.forms[''wke''].submit();">');
+    hstrl.Add('<form id="wke" name="wke" action="'+TIDSConnectHelper.HtmlEscape(_ServiceURL)+'" method="post" accept-charset="utf-8">');
+    hstrl.Add(HiddenField('kndnr',_Cst,50));
+    hstrl.Add(HiddenField('name_kunde',_UN,50));
+    hstrl.Add(HiddenField('pw_kunde',_Pwd,50));
+    //Hier stand bisher 1.3, waehrend ADT und AS 2.5 meldeten
+    hstrl.Add(HiddenField('version',TIDSConnect_CurrentVersionStr,5));
+    hstrl.Add(HiddenField('action','WKE',3));
+    hstrl.Add(HiddenField('hookurl',HookUrlWithSid(sid),256));
+    hstrl.Add('</form></body></html>');
+    if not SaveFormToFile(hstrl,_TmpFilename) then
+      exit;
+  finally
+    hstrl.Free;
+  end;
 
+  if not OpenInBrowser(_TmpFilename) then
+    exit;
 
   if TaskMessageDlg('Warte auf Abschluss...', 'Warenkorb einlesen', mtConfirmation, mbYesNoCancel, 0) = mrYes then
   begin
     str := TMemoryStream.Create;
     try
-      if TIDSConnect.GetStreamFromUrl(TIDSConnect.IDSCONNECT_HOOKURL+'?sid='+sid,str,nil,nil) then
+      if TIDSConnect.GetStreamFromUrl(HookUrlWithSid(sid),str,nil,nil) then
         Result := _Warenkorb.LoadFromStream(str);
     finally
       str.Free;
@@ -1330,6 +1783,8 @@ var
   hstr : TStringBuilder;
 begin
   Result := false;
+  if _ServiceURL.IsEmpty then
+    exit;
   if _Cst.IsEmpty and _UN.IsEmpty and _Pwd.IsEmpty then
     exit;
   if TIDSConnect.IDSCONNECT_HOOKURL = '' then
@@ -1343,26 +1798,36 @@ begin
   hstr := TStringBuilder.Create;
   hstrl := TStringList.Create;
   try
-    _Warenkorb.SaveToString(hstr);
-    hstrl.Add('<!doctype html public "-//W3C//DTD HTML 3.2 //EN">');
-    hstrl.Add('<html><head><title>IDS-Connect Schnittstelle WKS</title></head>');
+    if not _Warenkorb.SaveToString(hstr) then
+      exit;
+    hstrl.Add('<!doctype html>');
+    hstrl.Add(BuildFormHeader('WKS'));
     hstrl.Add('<body onload="document.forms[''wks''].submit();">');
-    hstrl.Add('<form id="wks" name="wks" action="'+_ServiceURL+'" method="post">');
-    hstrl.Add('<input type="hidden" name="kndnr" value="'+_Cst+'" size="50" maxlength="50">');
-    hstrl.Add('<input type="hidden" name="name_kunde" value="'+_UN+'" size="50" maxlength="50">');
-    hstrl.Add('<input type="hidden" name="pw_kunde" value="'+_Pwd+'" size="50" maxlength="50">');
-    hstrl.Add('<input type="hidden" name="version" value="1.3" size="5" maxlength="5">');
-    hstrl.Add('<textarea cols="1" rows="1" name="warenkorb">'+#13#10+hstr.ToString+#13#10+'</textarea>');
-    hstrl.Add('<input type="hidden" name="action" value="WKS" size="3" maxlength="3">');
+    hstrl.Add('<form id="wks" name="wks" action="'+TIDSConnectHelper.HtmlEscape(_ServiceURL)+'" method="post" accept-charset="utf-8">');
+    hstrl.Add(HiddenField('kndnr',_Cst,50));
+    hstrl.Add(HiddenField('name_kunde',_UN,50));
+    hstrl.Add(HiddenField('pw_kunde',_Pwd,50));
+    //Hier stand bisher 1.3, waehrend das erzeugte XML 2.5 bzw. 2.5.1 meldet
+    hstrl.Add(HiddenField('version',TIDSConnect_CurrentVersionStr,5));
+    //Der Browser dekodiert Entities im textarea-Inhalt vor dem Absenden.
+    //Das XML muss deshalb ein zweites Mal - diesmal HTML - maskiert werden,
+    //sonst kommt ein im XML korrektes &amp; als nacktes & beim Shop an und
+    //ein </textarea> im Langtext wuerde aus dem Formular ausbrechen.
+    hstrl.Add('<textarea cols="1" rows="1" name="warenkorb">'+#13#10+
+              TIDSConnectHelper.HtmlEscape(hstr.ToString)+#13#10+'</textarea>');
+    hstrl.Add(HiddenField('action','WKS',3));
     if not _DontWait then
-      hstrl.Add('<input type="hidden" name="hookurl" value="'+IDSCONNECT_HOOKURL+'?sid='+sid +'" size="256" maxlength="256">');
+      hstrl.Add(HiddenField('hookurl',HookUrlWithSid(sid),256));
     hstrl.Add('</form></body></html>');
-    hstrl.SaveToFile(_TmpFilename,TEncoding.GetEncoding(1252));
+    if not SaveFormToFile(hstrl,_TmpFilename) then
+      exit;
   finally
     hstrl.Free;
     hstr.Free;
   end;
-  ShellExecuteW(0,'open',PChar(_TmpFilename),'','',SW_SHOWNORMAL);
+
+  if not OpenInBrowser(_TmpFilename) then
+    exit;
 
   if _DontWait then
   begin
@@ -1374,7 +1839,7 @@ begin
   begin
     str := TMemoryStream.Create;
     try
-      if TIDSConnect.GetStreamFromUrl(TIDSConnect.IDSCONNECT_HOOKURL+'?sid='+sid,str,nil,nil) then
+      if TIDSConnect.GetStreamFromUrl(HookUrlWithSid(sid),str,nil,nil) then
         Result := _Warenkorb.LoadFromStream(str);
     finally
       str.Free;
@@ -1388,7 +1853,14 @@ procedure TIDSConnect.TValidateCertificatHelper.DoValidateCertificateEvent(
   const Sender: TObject; const ARequest: TURLRequest;
   const Certificate: TCertificate; var Accepted: Boolean);
 begin
-  Accepted := true;
+  //Hier stand bedingungslos Accepted := true - damit war die
+  //Serverauthentifizierung fuer einen Kanal abgeschaltet, ueber den
+  //Zugangsdaten, Preise und Bestelldaten laufen.
+  //Nur wenn der Anwender das ausdruecklich fuer eine Testumgebung freischaltet,
+  //wird ein nicht vertrauenswuerdiges Zertifikat akzeptiert.
+  Accepted := TIDSConnect.IDSCONNECT_ALLOW_INVALID_CERT;
+  if not Accepted then
+    TIDSConnect.ReportError('Das Serverzertifikat wurde abgelehnt: '+Certificate.Subject,nil);
 end;
 
 end.
