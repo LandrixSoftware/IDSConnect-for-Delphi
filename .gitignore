@@ -80,5 +80,6 @@ Deprecated
 # Zugangsdaten und lokale Testdaten nicht einchecken
 Samples/configuration.ini
 configuration.ini
+config.ini
 Testdata/
 *.delphilsp.json

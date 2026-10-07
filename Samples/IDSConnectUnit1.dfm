@@ -113,10 +113,10 @@ object MainForm: TMainForm
     Text = 'Wanne'
   end
   object Memo1: TMemo
-    Left = 463
-    Top = 200
-    Width = 345
-    Height = 289
+    Left = 814
+    Top = 4
+    Width = 457
+    Height = 177
     ScrollBars = ssBoth
     TabOrder = 8
   end
@@ -129,5 +129,22 @@ object MainForm: TMainForm
     Checked = True
     State = cbChecked
     TabOrder = 9
+  end
+  object Panel1: TPanel
+    Left = 464
+    Top = 200
+    Width = 809
+    Height = 657
+    Caption = 'Panel1'
+    TabOrder = 11
+  end
+  object FSaveResponse: TButton
+    Left = 600
+    Top = 51
+    Width = 121
+    Height = 25
+    Caption = 'R'#252'ckgabe speichern ...'
+    TabOrder = 12
+    OnClick = SaveResponseClick
   end
 end

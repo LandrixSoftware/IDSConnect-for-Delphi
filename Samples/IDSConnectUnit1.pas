@@ -6,8 +6,8 @@ uses
   Winapi.Windows, Winapi.Messages, System.SysUtils, System.Variants,
   System.Classes, Vcl.Graphics,Vcl.Controls, Vcl.Forms, System.UITypes,
   Vcl.Dialogs, Vcl.StdCtrls, System.Inifiles, System.StrUtils, System.IOUtils,
-  System.DateUtils
-  ,intf.IDSConnectTypes,intf.IDSConnect,intf.IDSConnectDlgWebBrowser;
+  System.DateUtils, System.Math, Vcl.ComCtrls
+  ,intf.IDSConnectTypes,intf.IDSConnect,intf.IDSConnectDlgWebBrowser, Vcl.ExtCtrls;
 
 type
   TMainForm = class(TForm)
@@ -25,6 +25,8 @@ type
     Memo1: TMemo;
     CheckBox1: TCheckBox;
     Button6: TButton;
+    Panel1: TPanel;
+    FSaveResponse: TButton;
     procedure FormCreate(Sender: TObject);
     procedure FormDestroy(Sender: TObject);
     procedure Button1Click(Sender: TObject);
@@ -34,6 +36,7 @@ type
     procedure Button5Click(Sender: TObject);
     procedure Button4Click(Sender: TObject);
     procedure Button6Click(Sender: TObject);
+    procedure SaveResponseClick(Sender : TObject);
   private
     //Aufbau der Ini-Datei mit Lieferanten
     //
@@ -52,6 +55,7 @@ type
     //                     Abfrage "LI" (Schalter "Shop-Infos")
     //IDSConnectUrl=https://...
     //                     Einstiegsadresse der IDS-Schnittstelle des Shops
+    //Version=2.5.1       2.5 oder 2.5.1; ohne Eintrag bisheriger Standard 2.5.1
     //DemoArticle=...      optional; Artikelnummer, die beim Auswaehlen des
     //                     Anbieters in das Feld Artikelnummer uebernommen wird
     //MultipleResult=1     optional; der Shop beherrscht die Mehrfachrueckgabe
@@ -62,7 +66,16 @@ type
     //                     werden.
 
     cfg : TMemIniFile;
+    FPages : TPageControl;
+    FRawMemo, FCartMemo : TMemo;
+    FResponseBody : TBytes;
+    procedure CreateResultViews;
+    procedure HandleIDSRequest(const _Url,_Parameters : String);
+    procedure HandleIDSResponse(const _Url : String; _StatusCode : Integer;
+      const _Body : TBytes);
+    procedure ShowReceivedCart(_Warenkorb : TIDSConnect_Warenkorb);
     function ConfigFilename : String;
+    function ReadShopVersion(out _Version : TIDSConnect_Version) : Boolean;
     procedure LoadConfig;
     //Die Hook-URL muss auf einen eigenen Server zeigen; ueber sie laufen
     //Warenkorb-, Preis- und Kundendaten zurueck zur Handwerkssoftware.
@@ -89,8 +102,172 @@ const
   CFG_SETTINGS = 'Settings';
 
 function TMainForm.ConfigFilename: String;
+var
+  lDir : String;
 begin
-  Result := ExtractFilePath(ExtractFileDir(ExtractFileDir(Application.ExeName)))+'configuration.ini';
+  Result := TPath.Combine(ExtractFilePath(Application.ExeName),'config.ini');
+  if FileExists(Result) then
+    exit;
+  Result := TPath.Combine(ExtractFilePath(Application.ExeName),'configuration.ini');
+  if FileExists(Result) then
+    exit;
+  lDir := ExtractFilePath(ExtractFileDir(ExtractFileDir(Application.ExeName)));
+  Result := TPath.Combine(lDir,'config.ini');
+  if not FileExists(Result) and FileExists(TPath.Combine(lDir,'configuration.ini')) then
+    Result := TPath.Combine(lDir,'configuration.ini');
+end;
+
+function TMainForm.ReadShopVersion(out _Version : TIDSConnect_Version) : Boolean;
+var
+  lValue : String;
+begin
+  lValue := Trim(cfg.ReadString(SelectedSection,'Version','2.5.1'));
+  _Version := TIDSConnectHelper.VersionFromStr(lValue);
+  Result := (lValue = '2.5') or (lValue = '2.5.1');
+  if not Result then
+  begin
+    FPages.ActivePageIndex := 0;
+    Memo1.Lines.Add('Ungültige Version in '+ConfigFilename+' ['+SelectedSection+']: "'+lValue+'". Erlaubt: 2.5 oder 2.5.1.');
+  end;
+end;
+
+procedure TMainForm.CreateResultViews;
+var
+  lTab : TTabSheet;
+
+  function AddMemo(const _Caption : String) : TMemo;
+  var
+    lPage : TTabSheet;
+  begin
+    lPage := TTabSheet.Create(Self);
+    lPage.PageControl := FPages;
+    lPage.Caption := _Caption;
+    Result := TMemo.Create(Self);
+    Result.Parent := lPage;
+    Result.Align := alClient;
+    Result.ReadOnly := true;
+    Result.ScrollBars := ssBoth;
+    Result.WordWrap := false;
+    Result.Font.Name := 'Consolas';
+  end;
+
+begin
+  FPages := TPageControl.Create(Self);
+  FPages.Parent := Panel1;
+  FPages.Align := alClient;
+  lTab := TTabSheet.Create(Self);
+  lTab.PageControl := FPages;
+  lTab.Caption := 'Aufruf / Protokoll';
+  Memo1.Parent := lTab;
+  Memo1.Align := alClient;
+  Memo1.ReadOnly := true;
+  Memo1.WordWrap := false;
+  FRawMemo := AddMemo('XML / rohe Rückgabe');
+  FCartMemo := AddMemo('Eingelesener Warenkorb');
+  FPages.ActivePageIndex := 0;
+end;
+
+procedure TMainForm.HandleIDSRequest(const _Url,_Parameters : String);
+begin
+  Memo1.Lines.Add('Vorbereiteter Shop-Aufruf: POST '+_Url);
+  Memo1.Lines.Add(_Parameters);
+  Memo1.Lines.Add('Der Browser führt den Shop-Aufruf aus. Die Rückgabe wird über die Hook-URL abgeholt.');
+  Memo1.Lines.Add('');
+end;
+
+procedure TMainForm.HandleIDSResponse(const _Url : String; _StatusCode : Integer;
+  const _Body : TBytes);
+var
+  lText, lDecl : String;
+  lEncoding : TEncoding;
+begin
+  Memo1.Lines.Add(FormatDateTime('hh:nn:ss',Now)+' Hook-Abruf: HTTP '+
+    IntToStr(_StatusCode)+', '+IntToStr(Length(_Body))+' Bytes');
+  if _StatusCode = 404 then
+    Memo1.Lines.Add('Noch keine Rückgabe an der Hook-URL vorhanden.');
+  //Leere Polling-Antworten und 404 duerfen die letzte Nutzlast nicht verdecken.
+  if (_StatusCode = 404) or (Length(_Body) = 0) then
+    exit;
+  FResponseBody := Copy(_Body,0,Length(_Body));
+  FSaveResponse.Enabled := true;
+  lDecl := TEncoding.ASCII.GetString(_Body,0,Min(Length(_Body),200));
+  lEncoding := nil;
+  try
+    if ContainsText(lDecl,'iso-8859-1') then
+      lEncoding := TEncoding.GetEncoding(28591)
+    else if ContainsText(lDecl,'windows-1252') then
+      lEncoding := TEncoding.GetEncoding(1252);
+    if Assigned(lEncoding) then
+      lText := lEncoding.GetString(_Body)
+    else
+    begin
+      try
+        lText := TEncoding.UTF8.GetString(_Body);
+      except
+        on E: EEncodingError do
+        begin
+          lEncoding := TEncoding.GetEncoding(28591);
+          lText := lEncoding.GetString(_Body);
+          Memo1.Lines.Add('Die Rückgabe ist kein gültiges UTF-8. Anzeige ersatzweise als ISO-8859-1; gespeicherte Bytes bleiben unverändert.');
+        end;
+      end;
+    end;
+    FRawMemo.Text := lText;
+  finally
+    lEncoding.Free;
+  end;
+end;
+
+procedure TMainForm.SaveResponseClick(Sender : TObject);
+var
+  lDialog : TSaveDialog;
+begin
+  lDialog := TSaveDialog.Create(Self);
+  try
+    lDialog.Title := 'Unveränderte Rückgabe speichern';
+    lDialog.Filter := 'XML-Datei (*.xml)|*.xml|Alle Dateien (*.*)|*.*';
+    lDialog.DefaultExt := 'xml';
+    lDialog.FileName := 'wke-rueckgabe.xml';
+    lDialog.Options := lDialog.Options + [ofOverwritePrompt];
+    if lDialog.Execute then
+      TFile.WriteAllBytes(lDialog.FileName,FResponseBody);
+  finally
+    lDialog.Free;
+  end;
+end;
+
+procedure TMainForm.ShowReceivedCart(_Warenkorb : TIDSConnect_Warenkorb);
+var
+  i : Integer;
+  lItem : TIDSConnect_OrderItem;
+begin
+  FCartMemo.Clear;
+  if _Warenkorb.WarenkorbInfo.Version = idsConnectVersion_Unkown then
+    FCartMemo.Lines.Add('Version: unbekannt')
+  else
+    FCartMemo.Lines.Add('Version: '+TIDSConnectHelper.VersionToStr(_Warenkorb.WarenkorbInfo.Version));
+  FCartMemo.Lines.Add('Kundennummer: '+_Warenkorb.Order.CustomerInfo.IDNo);
+  FCartMemo.Lines.Add('Kommission: '+_Warenkorb.Order.OrderInfo.Kommission);
+  FCartMemo.Lines.Add('Positionen: '+IntToStr(_Warenkorb.Order.OrderItems.Count));
+  FCartMemo.Lines.Add('Hinweis: Fehlende Zahlenfelder können im Datenmodell als 0 erscheinen. Maßgeblich ist die XML-Rückgabe.');
+  for i := 0 to _Warenkorb.Order.OrderItems.Count-1 do
+  begin
+    lItem := _Warenkorb.Order.OrderItems[i];
+    FCartMemo.Lines.Add('');
+    FCartMemo.Lines.Add(Format('Position %d: %s',[i+1,lItem.ArtNo]));
+    FCartMemo.Lines.Add('  Kurztext: '+lItem.Kurztext);
+    FCartMemo.Lines.Add('  Langtext: '+lItem.Langtext);
+    FCartMemo.Lines.Add('  EAN: '+lItem.EAN);
+    FCartMemo.Lines.Add(Format('  Menge: %.4f %s',[lItem.Qty,TIDSConnectHelper.QuToQuStr(lItem.QU)]));
+    FCartMemo.Lines.Add(Format('  Nettopreis: %.4f   Preisbasis: %.4f   MwSt.: %.2f %%',
+      [lItem.NetPrice,lItem.PriceBasis,lItem.VAT]));
+    FCartMemo.Lines.Add('  Hinweis: '+lItem.Hinweis);
+    FCartMemo.Lines.Add(Format('  Fehlercode: %d   Fehlertext: %s',[Ord(lItem.Fehlercode),lItem.Fehlertext]));
+    if (lItem.Fehlercode <> idsConnectFc_None) or (lItem.Fehlertext <> '') then
+      Memo1.Lines.Add(Format('Shop meldet einen Fehler bei Position %d: %s',[i+1,lItem.Fehlertext]));
+  end;
+  if _Warenkorb.Order.OrderItems.Count = 0 then
+    Memo1.Lines.Add('Die Rückgabe enthält keine Positionen.');
 end;
 
 function TMainForm.TempHtmlFilename: String;
@@ -126,7 +303,7 @@ begin
   TIDSConnect.IDSCONNECT_HOOKURL := cfg.ReadString(CFG_SETTINGS,'HookUrl','');
   Result := TIDSConnect.IDSCONNECT_HOOKURL <> '';
   if not Result then
-    MessageDlg('In der configuration.ini fehlt die eigene Rücksprungadresse:'+sLineBreak+sLineBreak+
+    MessageDlg('In '+ConfigFilename+' fehlt die eigene Rücksprungadresse:'+sLineBreak+sLineBreak+
                '['+CFG_SETTINGS+']'+sLineBreak+
                'HookUrl=https://<eigener-server>/idsconnect.php'+sLineBreak+sLineBreak+
                'Über diese Adresse werden Warenkorb- und Preisdaten zurückübertragen.',
@@ -181,9 +358,12 @@ var
   lUrl : String;
   lLogin : TIDSConnect_LoginInfo;
   lVersions : TStringList;
+  lVersion : TIDSConnect_Version;
 begin
   Memo1.Clear;
   if SelectedSection = '' then
+    exit;
+  if not ReadShopVersion(lVersion) then
     exit;
   lUrl := cfg.ReadString(SelectedSection,'IDSConnectUrl','');
   if lUrl = '' then
@@ -192,16 +372,17 @@ begin
   Screen.Cursor := crHourGlass;
   try
     Memo1.Lines.Add('Abfrage an '+lUrl);
+    Memo1.Lines.Add('Konfigurierte Version: '+TIDSConnectHelper.VersionToStr(lVersion));
     Memo1.Lines.Add('');
 
     //Aktion "SV": welche Schnittstellenversionen kann der Shop?
     lVersions := TStringList.Create;
     try
-      if TIDSConnect.IDSConnectSV(lUrl,lVersions) then
+      if TIDSConnect.IDSConnectSV(lUrl,lVersions,lVersion) then
       begin
         Memo1.Lines.Add('Unterstützte Versionen: '+lVersions.CommaText);
         Memo1.Lines.Add('Höchste gemeinsame Version: '+
-          TIDSConnectHelper.VersionToStr(TIDSConnect.IDSConnectSVBestVersion(lUrl)));
+          TIDSConnectHelper.VersionToStr(TIDSConnect.IDSConnectSVBestVersion(lUrl,lVersion)));
       end else
         Memo1.Lines.Add('Versionsabfrage (SV) nicht beantwortet.');
     finally
@@ -209,7 +390,7 @@ begin
     end;
 
     //Aktion "LI": welche Anmeldedaten braucht der Shop?
-    if TIDSConnect.IDSConnectLI(lUrl,lLogin) then
+    if TIDSConnect.IDSConnectLI(lUrl,lLogin,lVersion) then
     begin
       Memo1.Lines.Add('');
       Memo1.Lines.Add('Kundennummer erforderlich: '+BoolToStr(lLogin.CustomerNoRequired,true));
@@ -233,37 +414,68 @@ end;
 procedure TMainForm.Button2Click(Sender: TObject);
 var
   lWarenkorb : TIDSConnect_Warenkorb;
+  lVersion : TIDSConnect_Version;
+  lStarted : UInt64;
+  lOldRequest : TIDSConnectOnRequest;
+  lOldResponse : TIDSConnectOnResponse;
 begin
   Memo1.Clear;
+  FRawMemo.Clear;
+  FCartMemo.Clear;
+  FResponseBody := nil;
+  FSaveResponse.Enabled := false;
+  FPages.ActivePageIndex := 0;
   if SelectedSection = '' then
+  begin
+    Memo1.Lines.Add('Bitte zuerst einen Anbieter auswählen.');
+    exit;
+  end;
+  if not ReadShopVersion(lVersion) then
     exit;
   if not PrepareHookUrl then
     exit;
 
+  Memo1.Lines.Add('WKE – Warenkorb empfangen: '+SelectedSection);
+  Memo1.Lines.Add('Im Shop den gewünschten Warenkorb an die Handwerkssoftware zurückgeben.');
+  Memo1.Lines.Add('Browser: '+IfThen(CheckBox1.Checked,'integriert','Standardbrowser'));
+  lStarted := GetTickCount64;
+  lOldRequest := TIDSConnect.IDSCONNECT_ONREQUEST;
+  lOldResponse := TIDSConnect.IDSCONNECT_ONRESPONSE;
   lWarenkorb := TIDSConnect_Warenkorb.Create;
   try
+    TIDSConnect.IDSCONNECT_ONREQUEST := HandleIDSRequest;
+    TIDSConnect.IDSCONNECT_ONRESPONSE := HandleIDSResponse;
     if not TIDSConnect.IDSConnectWKE(
               cfg.ReadString(SelectedSection,'IDSConnectUrl',''),
               cfg.ReadString(SelectedSection,'Customernumber',''),
               cfg.ReadString(SelectedSection,'Username',''),
               cfg.ReadString(SelectedSection,'Password',''),
               TempHtmlFilename,
-              lWarenkorb) then
+              lWarenkorb,lVersion) then
     begin
-      //Bisher wurde der empfangene Warenkorb kommentarlos verworfen
-      Memo1.Lines.Add('Es wurde kein Warenkorb empfangen.');
+      Memo1.Lines.Add('Ergebnis: Kein Warenkorb erfolgreich eingelesen.');
+      Memo1.Lines.Add('Bei Abbruch oder ausbleibender Rückgabe lässt sich daraus kein Shop-Fehler ableiten.');
       exit;
     end;
 
-    ShowWarenkorb(lWarenkorb);
+    Memo1.Lines.Add('Ergebnis: Rückgabe empfangen und als Warenkorb eingelesen.');
+    Memo1.Lines.Add('Dies ist keine XML-Schema- oder fachliche Vollständigkeitsprüfung.');
+    ShowReceivedCart(lWarenkorb);
   finally
+    TIDSConnect.IDSCONNECT_ONREQUEST := lOldRequest;
+    TIDSConnect.IDSCONNECT_ONRESPONSE := lOldResponse;
+    Memo1.Lines.Add(Format('Dauer einschließlich Shop-Bedienung: %.1f s',[(GetTickCount64-lStarted)/1000]));
     lWarenkorb.Free;
   end;
 end;
 
 procedure TMainForm.Button3Click(Sender: TObject);
+var
+  lVersion : TIDSConnect_Version;
 begin
   if SelectedSection = '' then
+    exit;
+  if not ReadShopVersion(lVersion) then
     exit;
   TIDSConnect.IDSConnectADT(
             cfg.ReadString(SelectedSection,'IDSConnectUrl',''),
@@ -271,17 +483,20 @@ begin
             cfg.ReadString(SelectedSection,'Username',''),
             cfg.ReadString(SelectedSection,'Password',''),
             Edit1.Text,
-            TempHtmlFilename);
+            TempHtmlFilename,lVersion);
 end;
 
 procedure TMainForm.Button4Click(Sender: TObject);
 var
   lWarenkorb : TIDSConnect_Warenkorb;
+  lVersion : TIDSConnect_Version;
   lSendOnly : Boolean;
   lAnswer : Integer;
 begin
   Memo1.Clear;
   if SelectedSection = '' then
+    exit;
+  if not ReadShopVersion(lVersion) then
     exit;
   if not PrepareHookUrl then
     exit;
@@ -300,14 +515,17 @@ begin
     lWarenkorb.WarenkorbInfo.Date := Date;
     //Now enthaelt auch den Datumsanteil; das Feld ist ein TTime
     lWarenkorb.WarenkorbInfo.Time := TimeOf(Now);
-    //Ab IDS 2.5.1 werden Belegnummern als Referenzen uebergeben
-    lWarenkorb.WarenkorbInfo.Version := idsConnectVersion_2_5_1;
+    lWarenkorb.WarenkorbInfo.Version := lVersion;
+    //Ab IDS 2.5.1 werden Belegnummern als Referenzen uebergeben.
+    if lVersion = idsConnectVersion_2_5_1 then
     with lWarenkorb.Order.OrderInfo.Referenzen.AddItem do
     begin
       ReferenzNumber := 'B-2024-0815';
       ReferenzDate := Date;
       ReferenzType := idsConnectRefType_220; //Bestellung
-    end;
+    end
+    else
+      lWarenkorb.Order.OrderInfo.PartNo := 'B-2024-0815';
     lWarenkorb.Order.OrderInfo.Kommission := 'Bauvorhaben Müller & Sohn <Neubau>';
 
     with lWarenkorb.Order.OrderItems.AddItem do
@@ -350,9 +568,12 @@ end;
 procedure TMainForm.Button5Click(Sender: TObject);
 var
   lWarenkorb : TIDSConnect_Warenkorb;
+  lVersion : TIDSConnect_Version;
 begin
   Memo1.Clear;
   if SelectedSection = '' then
+    exit;
+  if not ReadShopVersion(lVersion) then
     exit;
   if not PrepareHookUrl then
     exit;
@@ -370,7 +591,7 @@ begin
               //ab IDS 2.5.1: Mehrfachrueckgabe nur, wenn der Anbieter sie laut
               //configuration.ini beherrscht. Die Hook-URL bleibt jeweils
               //300 Sekunden nach der letzten Rueckgabe aktiv.
-              UseMultipleResult,300) then
+              UseMultipleResult,300,lVersion) then
     begin
       Memo1.Lines.Add('Es wurde kein Suchergebnis übernommen.');
       exit;
@@ -400,6 +621,7 @@ begin
                         'Password=...'+sLineBreak+
                         'Customernumber=...'+sLineBreak+
                         'IDSConnectUrl=https://...'+sLineBreak+
+                        'Version=2.5.1          ; 2.5 oder 2.5.1'+sLineBreak+
                         'DemoArticle=...        ; optional, füllt das Feld Artikelnummer'+sLineBreak+
                         'MultipleResult=1       ; optional, Shop beherrscht die Mehrfachrückgabe'+sLineBreak+sLineBreak+
                         'Die HookUrl ist die eigene Rücksprungadresse, über die der Shop'+sLineBreak+
@@ -426,6 +648,7 @@ end;
 
 procedure TMainForm.FormCreate(Sender: TObject);
 begin
+  CreateResultViews;
   Memo1.Clear;
   TIDSConnect.IDSCONNECT_ONERROR := HandleIDSError;
   //Wie lange beim Senden/Empfangen auf die Rueckuebertragung gewartet wird.

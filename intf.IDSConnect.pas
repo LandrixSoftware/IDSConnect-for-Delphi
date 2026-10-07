@@ -30,6 +30,9 @@ uses
 
 type
   TIDSConnectOnException = reference to procedure (const _Message : String; _E : Exception);
+  TIDSConnectOnRequest = reference to procedure (const _Url,_Parameters : String);
+  TIDSConnectOnResponse = reference to procedure (const _Url : String;
+    _StatusCode : Integer; const _Body : TBytes);
 
   TIDSConnect = class(TObject)
   public class var
@@ -40,6 +43,10 @@ type
     //Optionaler Fehler-Callback. Fruehere Versionen haben Parser- und
     //Netzwerkfehler in leeren except-Bloecken verschluckt.
     IDSCONNECT_ONERROR : TIDSConnectOnException;
+    //Optional: vorbereiteter WKE-Aufruf (Passwort maskiert) und rohe
+    //HTTP-Antworten der Hook-URL, auch bei HTTP- oder XML-Fehlern.
+    IDSCONNECT_ONREQUEST : TIDSConnectOnRequest;
+    IDSCONNECT_ONRESPONSE : TIDSConnectOnResponse;
     //Wie lange (in Sekunden) beim Warenkorb senden/empfangen auf die
     //Rueckuebertragung gewartet wird. 0 = ohne Zeitbegrenzung warten, bis der
     //Anwender abbricht. Fuer die Artikelsuche gibt es ab IDS 2.5.1 den
@@ -62,16 +69,13 @@ type
     class procedure ReportError(const _Message : String; _E : Exception);
     class function GetUuid : String;
     class function HookUrlWithSid(const _Sid : String) : String;
-    //Ein einzelner, stiller Abrufversuch. Liefert nur dann true, wenn
-    //tatsaechlich ein Warenkorb angekommen ist und gelesen werden konnte.
-    class function TryFetchResult(const _Url : String;_Warenkorb : TIDSConnect_Warenkorb;
-                                  out _Error : String) : Boolean; overload;
     class function TryFetchResult(const _Url : String;_Warenkorb : TIDSConnect_Warenkorb) : Boolean; overload;
     //Basisadresse der Hook-URL ohne Query - daran erkennt der integrierte
     //Browser, dass die Rueck-Kommunikation abgeschlossen ist
     class function HookUrlBase : String;
     //Direkter POST einer Aktion ohne Browser; fuer die Abfragen LI und SV
-    class function PostAction(const _ServiceURL,_Action : String; out _Response : String) : Boolean;
+    class function PostAction(const _ServiceURL,_Action : String; out _Response : String;
+      _Version : TIDSConnect_Version) : Boolean;
     //Wurzelknoten der Antwort einer Abfrage; nil bei Fehler
     class function ParseResponse(const _Response,_RootName : String; out _Doc : IXMLDocument) : IXMLNode;
     //Wartet mit Fortschrittsdialog, bis die Rueckuebertragung eingetroffen
@@ -89,6 +93,11 @@ type
                                     _Warenkorb : TIDSConnect_Warenkorb; _TimeoutSec : Integer;
                                     _MultipleResult : Boolean = false) : Boolean;
   public
+    //Ein einzelner Abruf der vollstaendigen Hook-URL inklusive sid, auch fuer
+    //eigene Diagnose-/Polling-Oberflaechen. 404 oder leer: false, kein Fehler.
+    //HTTP-/Parserfehler: false und Fehlertext. Rohe Antwort ueber ONRESPONSE.
+    class function TryFetchResult(const _Url : String;_Warenkorb : TIDSConnect_Warenkorb;
+                                  out _Error : String) : Boolean; overload;
     //Haengt die Positionen einer Rueckgabe an den Zielwarenkorb an. Wird bei
     //der Mehrfachrueckgabe (multipleResult, ab IDS 2.5.1) gebraucht und steht
     //auch fuer eine eigene Ablaufsteuerung zur Verfuegung.
@@ -96,21 +105,27 @@ type
 
     //Aktion "LI": fragt ab, welche Anmeldedaten das Shop-System benoetigt.
     //Laeuft als direkter POST, ohne Browser und ohne Hook-URL.
-    class function IDSConnectLI(const _ServiceURL : String; out _LoginInfo : TIDSConnect_LoginInfo) : Boolean;
+    class function IDSConnectLI(const _ServiceURL : String; out _LoginInfo : TIDSConnect_LoginInfo;
+      _Version : TIDSConnect_Version = idsConnectVersion_2_5_1) : Boolean;
     //Aktion "SV": fragt die vom Shop unterstuetzten Schnittstellenversionen ab.
     //_Versions erhaelt die Angaben in der Reihenfolge der Antwort.
-    class function IDSConnectSV(const _ServiceURL : String; _Versions : TStrings) : Boolean;
+    class function IDSConnectSV(const _ServiceURL : String; _Versions : TStrings;
+      _Version : TIDSConnect_Version = idsConnectVersion_2_5_1) : Boolean;
     //Liefert die hoechste Version, die sowohl der Shop als auch diese Unit
     //beherrscht - oder idsConnectVersion_Unkown, wenn die Abfrage scheitert.
-    class function IDSConnectSVBestVersion(const _ServiceURL : String) : TIDSConnect_Version;
-    class procedure IDSConnectADT(const _ServiceURL,_Cst,_UN,_Pwd,_ArtNr,_TmpFilename : String);
-    class function  IDSConnectWKE(const _ServiceURL,_Cst,_UN,_Pwd,_TmpFilename : String;_Warenkorb : TIDSConnect_Warenkorb) : Boolean;
+    class function IDSConnectSVBestVersion(const _ServiceURL : String;
+      _Version : TIDSConnect_Version = idsConnectVersion_2_5_1) : TIDSConnect_Version;
+    class procedure IDSConnectADT(const _ServiceURL,_Cst,_UN,_Pwd,_ArtNr,_TmpFilename : String;
+      _Version : TIDSConnect_Version = idsConnectVersion_2_5_1);
+    class function  IDSConnectWKE(const _ServiceURL,_Cst,_UN,_Pwd,_TmpFilename : String;_Warenkorb : TIDSConnect_Warenkorb;
+      _Version : TIDSConnect_Version = idsConnectVersion_2_5_1) : Boolean;
     class function  IDSConnectWKS(_ServiceURL,_Cst,_UN,_Pwd,_TmpFilename : String;_Warenkorb : TIDSConnect_Warenkorb;_DontWait : Boolean = false) : Boolean;
     //_MultipleResult und _HookUrlTimeout sind ab IDS 2.5.1 definiert:
     //_MultipleResult = true  -> die Handwerkssoftware unterstuetzt mehrfache Uebertragungen an die HookUrl
     //_HookUrlTimeout > 0     -> Angabe in Sekunden, wie lange die HookUrl aktiv bleibt
     class function  IDSConnectAS(_ServiceURL,_Cst,_UN,_Pwd,_TmpFilename,_SearchString : String;_Warenkorb : TIDSConnect_Warenkorb;
-                                 _MultipleResult : Boolean = false;_HookUrlTimeout : Integer = 0) : Boolean;
+                                 _MultipleResult : Boolean = false;_HookUrlTimeout : Integer = 0;
+                                 _Version : TIDSConnect_Version = idsConnectVersion_2_5_1) : Boolean;
   end;
 
   TIDSConnectHelper = class(TObject)
@@ -1639,7 +1654,7 @@ begin
 end;
 
 class function TIDSConnect.PostAction(const _ServiceURL, _Action: String;
-  out _Response: String): Boolean;
+  out _Response: String; _Version : TIDSConnect_Version): Boolean;
 var
   http : THTTPClient;
   vcHelper : TIDSConnect.TValidateCertificatHelper;
@@ -1662,7 +1677,7 @@ begin
     http.ResponseTimeout := 30000;
 
     data.AddField('action',_Action);
-    data.AddField('version',TIDSConnect_CurrentVersionStr);
+    data.AddField('version',TIDSConnectHelper.VersionToStr(_Version));
     try
       res := http.Post(_ServiceURL,data);
       if res.StatusCode <> 200 then
@@ -1706,7 +1721,7 @@ begin
 end;
 
 class function TIDSConnect.IDSConnectLI(const _ServiceURL: String;
-  out _LoginInfo: TIDSConnect_LoginInfo): Boolean;
+  out _LoginInfo: TIDSConnect_LoginInfo; _Version : TIDSConnect_Version): Boolean;
 var
   lResponse : String;
   lDoc : IXMLDocument;
@@ -1723,7 +1738,7 @@ var
 begin
   _LoginInfo.Clear;
   Result := false;
-  if not PostAction(_ServiceURL,'LI',lResponse) then
+  if not PostAction(_ServiceURL,'LI',lResponse,_Version) then
     exit;
 
   lRoot := ParseResponse(lResponse,'Logininformationen',lDoc);
@@ -1738,7 +1753,7 @@ begin
 end;
 
 class function TIDSConnect.IDSConnectSV(const _ServiceURL: String;
-  _Versions: TStrings): Boolean;
+  _Versions: TStrings; _Version : TIDSConnect_Version): Boolean;
 var
   lResponse : String;
   lDoc : IXMLDocument;
@@ -1749,7 +1764,7 @@ begin
   if _Versions = nil then
     exit;
   _Versions.Clear;
-  if not PostAction(_ServiceURL,'SV',lResponse) then
+  if not PostAction(_ServiceURL,'SV',lResponse,_Version) then
     exit;
 
   lRoot := ParseResponse(lResponse,'Schnittstellenversionen',lDoc);
@@ -1763,7 +1778,7 @@ begin
 end;
 
 class function TIDSConnect.IDSConnectSVBestVersion(
-  const _ServiceURL: String): TIDSConnect_Version;
+  const _ServiceURL: String; _Version : TIDSConnect_Version): TIDSConnect_Version;
 var
   lVersions : TStringList;
   i : Integer;
@@ -1772,7 +1787,7 @@ begin
   Result := idsConnectVersion_Unkown;
   lVersions := TStringList.Create;
   try
-    if not IDSConnectSV(_ServiceURL,lVersions) then
+    if not IDSConnectSV(_ServiceURL,lVersions,_Version) then
       exit;
     //Hinweis: Die Beispielantwort der Spezifikation listet nur 1.3 bis 2.3
     //auf; Shops, die 2.5 oder 2.5.1 koennen, melden das entsprechend.
@@ -1804,6 +1819,8 @@ var
   str : TMemoryStream;
   http : THTTPClient;
   vcHelper : TIDSConnect.TValidateCertificatHelper;
+  res : IHTTPResponse;
+  body : TBytes;
 begin
   Result := false;
   _Error := '';
@@ -1827,11 +1844,26 @@ begin
       //Solange noch nichts vorliegt, antwortet der Callback-Endpunkt mit 404
       //bzw. mit einem leeren Rumpf. Das ist kein Fehler, sondern der
       //Normalfall waehrend des Wartens - deshalb wird hier nichts gemeldet.
-      if http.Get(_Url,str).StatusCode <> 200 then
+      res := http.Get(_Url,str);
+      if Assigned(IDSCONNECT_ONRESPONSE) then
+      begin
+        SetLength(body,str.Size);
+        str.Position := 0;
+        if Length(body) > 0 then
+          str.ReadBuffer(body[0],Length(body));
+        IDSCONNECT_ONRESPONSE(_Url,res.StatusCode,body);
+      end;
+      if res.StatusCode <> 200 then
+      begin
+        if res.StatusCode <> 404 then
+          _Error := Format('Hook-URL antwortet mit HTTP %d.',[res.StatusCode]);
         exit;
+      end;
       if str.Size = 0 then
         exit;
       Result := _Warenkorb.LoadFromStream(str);
+      if not Result then
+        _Error := 'Die Rückgabe konnte nicht als Warenkorb eingelesen werden.';
     except
       //Netzwerkaussetzer beenden das Warten nicht, der naechste Versuch folgt.
       //Der Aufrufer bekommt die Meldung aber einmalig zu sehen, damit ein
@@ -1856,6 +1888,8 @@ var
   lError : String;
 begin
   Result := TryFetchResult(_Url,_Warenkorb,lError);
+  if (not Result) and (lError <> '') then
+    ReportError(lError,nil);
 end;
 
 class procedure TIDSConnect.MergeOrderItems(_From, _To: TIDSConnect_Warenkorb);
@@ -2061,7 +2095,7 @@ begin
 end;
 
 class procedure TIDSConnect.IDSConnectADT(const _ServiceURL, _Cst, _UN, _Pwd,
-  _ArtNr, _TmpFilename: String);
+  _ArtNr, _TmpFilename: String; _Version : TIDSConnect_Version);
 var
   hstrl : TStringList;
 begin
@@ -2080,7 +2114,7 @@ begin
     hstrl.Add(HiddenField('kndnr',_Cst,50));
     hstrl.Add(HiddenField('name_kunde',_UN,50));
     hstrl.Add(HiddenField('pw_kunde',_Pwd,50));
-    hstrl.Add(HiddenField('version',TIDSConnect_CurrentVersionStr,5));
+    hstrl.Add(HiddenField('version',TIDSConnectHelper.VersionToStr(_Version),5));
     hstrl.Add(HiddenField('action','ADL',3));
     hstrl.Add(HiddenField('ghnummer',_ArtNr,35));
     hstrl.Add('</form></body></html>');
@@ -2093,7 +2127,7 @@ end;
 
 class function TIDSConnect.IDSConnectAS(_ServiceURL, _Cst, _UN, _Pwd,
   _TmpFilename, _SearchString: String; _Warenkorb: TIDSConnect_Warenkorb;
-  _MultipleResult : Boolean; _HookUrlTimeout : Integer): Boolean;
+  _MultipleResult : Boolean; _HookUrlTimeout : Integer; _Version : TIDSConnect_Version): Boolean;
 var
   hstrl : TStringList;
   sid : String;
@@ -2110,6 +2144,8 @@ begin
   if _Warenkorb = nil then
     exit;
 
+  if _Version < idsConnectVersion_2_5_1 then
+    _MultipleResult := false;
   sid := TIDSConnect.GetUuid;
   hstrl := TStringList.Create;
   try
@@ -2120,14 +2156,14 @@ begin
     hstrl.Add(HiddenField('kndnr',_Cst,50));
     hstrl.Add(HiddenField('name_kunde',_UN,50));
     hstrl.Add(HiddenField('pw_kunde',_Pwd,50));
-    hstrl.Add(HiddenField('version',TIDSConnect_CurrentVersionStr,5));
+    hstrl.Add(HiddenField('version',TIDSConnectHelper.VersionToStr(_Version),5));
     hstrl.Add(HiddenField('searchterm',_SearchString));
     hstrl.Add(HiddenField('action','AS',3));
     hstrl.Add(HiddenField('hookurl',HookUrlWithSid(sid),256));
     //Beide Parameter sind ab IDS 2.5.1 fuer die Artikelsuche definiert
     if _MultipleResult then
       hstrl.Add(HiddenField('multipleResult','true'));
-    if _HookUrlTimeout > 0 then
+    if (_Version >= idsConnectVersion_2_5_1) and (_HookUrlTimeout > 0) then
       hstrl.Add(HiddenField('hookURLTimeout',IntToStr(_HookUrlTimeout)));
     hstrl.Add('</form></body></html>');
     //Leerer Dateiname bedeutet: im integrierten Browser anzeigen.
@@ -2140,18 +2176,27 @@ begin
 end;
 
 class function TIDSConnect.IDSConnectWKE(const _ServiceURL, _Cst, _UN, _Pwd,
-  _TmpFilename: String; _Warenkorb: TIDSConnect_Warenkorb): Boolean;
+  _TmpFilename: String; _Warenkorb: TIDSConnect_Warenkorb; _Version : TIDSConnect_Version): Boolean;
 var
   hstrl : TStringList;
   sid : String;
 begin
   Result := false;
   if _ServiceURL.IsEmpty then
+  begin
+    ReportError('WKE: Die Shop-Adresse fehlt.',nil);
     exit;
+  end;
   if _Cst.IsEmpty and _UN.IsEmpty and _Pwd.IsEmpty then
+  begin
+    ReportError('WKE: Es sind keine Anmeldedaten eingetragen.',nil);
     exit;
+  end;
   if TIDSConnect.IDSCONNECT_HOOKURL = '' then
+  begin
+    ReportError('WKE: Die Hook-URL fehlt.',nil);
     exit;
+  end;
   if _Warenkorb = nil then
     exit;
 
@@ -2165,11 +2210,18 @@ begin
     hstrl.Add(HiddenField('kndnr',_Cst,50));
     hstrl.Add(HiddenField('name_kunde',_UN,50));
     hstrl.Add(HiddenField('pw_kunde',_Pwd,50));
-    //Hier stand bisher 1.3, waehrend ADT und AS 2.5 meldeten
-    hstrl.Add(HiddenField('version',TIDSConnect_CurrentVersionStr,5));
+    hstrl.Add(HiddenField('version',TIDSConnectHelper.VersionToStr(_Version),5));
     hstrl.Add(HiddenField('action','WKE',3));
     hstrl.Add(HiddenField('hookurl',HookUrlWithSid(sid),256));
     hstrl.Add('</form></body></html>');
+    if Assigned(IDSCONNECT_ONREQUEST) then
+      IDSCONNECT_ONREQUEST(_ServiceURL,
+        'action=WKE'+sLineBreak+
+        'version='+TIDSConnectHelper.VersionToStr(_Version)+sLineBreak+
+        'kndnr='+_Cst+sLineBreak+
+        'name_kunde='+_UN+sLineBreak+
+        'pw_kunde='+IfThen(_Pwd = '','(leer)','(maskiert)')+sLineBreak+
+        'hookurl='+HookUrlWithSid(sid));
     //Leerer Dateiname bedeutet: im integrierten Browser anzeigen
     Result := ShowFormAndFetch(hstrl,_TmpFilename,HookUrlWithSid(sid),_Warenkorb,IDSCONNECT_HOOKURL_TIMEOUT);
   finally
@@ -2208,8 +2260,8 @@ begin
     hstrl.Add(HiddenField('kndnr',_Cst,50));
     hstrl.Add(HiddenField('name_kunde',_UN,50));
     hstrl.Add(HiddenField('pw_kunde',_Pwd,50));
-    //Hier stand bisher 1.3, waehrend das erzeugte XML 2.5 bzw. 2.5.1 meldet
-    hstrl.Add(HiddenField('version',TIDSConnect_CurrentVersionStr,5));
+    //Formular und Warenkorb-XML muessen dieselbe Version melden.
+    hstrl.Add(HiddenField('version',TIDSConnectHelper.VersionToStr(_Warenkorb.WarenkorbInfo.Version),5));
     //Der Browser dekodiert Entities im textarea-Inhalt vor dem Absenden.
     //Das XML muss deshalb ein zweites Mal - diesmal HTML - maskiert werden,
     //sonst kommt ein im XML korrektes &amp; als nacktes & beim Shop an und
