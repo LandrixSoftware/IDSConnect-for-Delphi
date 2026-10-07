@@ -28,8 +28,8 @@ type
     returnUrlPrefix : String;
   public
     //Liefert den Ordner, in dem WebView2 Profil, Cookies und Cache ablegt.
-    //Ist _CachePath leer, wird ein anwendungseigener Ordner unterhalb von
-    //%LOCALAPPDATA% verwendet und bei Bedarf angelegt.
+    //Ist _CachePath leer, wird der Unterordner WebView2 neben der EXE
+    //verwendet und bei Bedarf angelegt.
     class function ResolveCachePath(const _CachePath : String) : String;
     class function ShowDialog(const _IDSHTMLValue,_CachePath : String;
                               const _ReturnUrlPrefix : String = '') : Boolean;
@@ -93,16 +93,10 @@ class function TIDSConnectDlgWebBrowser.ResolveCachePath(const _CachePath: Strin
 begin
   Result := _CachePath;
 
-  //Bleibt der Ordner leer, legt WebView2 sein Profil im Verzeichnis der
-  //ausfuehrbaren Datei an - unter C:\Program Files schlaegt die
-  //Initialisierung damit fehl. Der Standard aus der DFM zeigte ausserdem auf
-  //den Ordner der Entwicklungsumgebung (bds.exe.WebView2).
-  //Deshalb ein anwendungseigener, beschreibbarer Ordner unter %LOCALAPPDATA%.
-  //Er ist bewusst dauerhaft: WebView2 legt dort Cookies und Anmeldesitzung
-  //ab, sonst muesste sich der Anwender bei jedem Aufruf neu anmelden.
+  //Profil, Cookies und Cache dauerhaft im Unterordner neben der EXE ablegen.
+  //Der Pfad ist unabhaengig vom aktuellen Arbeitsverzeichnis.
   if Result = '' then
-    Result := TPath.Combine(TPath.GetCachePath,
-                ChangeFileExt(ExtractFileName(Application.ExeName),'')+'.IDSConnect.WebView2');
+    Result := TPath.Combine(ExtractFilePath(Application.ExeName),'WebView2');
 
   if not TDirectory.Exists(Result) then
   try
@@ -119,9 +113,31 @@ class function TIDSConnectDlgWebBrowser.ShowDialog(const _IDSHTMLValue,_CachePat
   const _ReturnUrlPrefix : String): Boolean;
 var
   lDlg : TIDSConnectDlgWebBrowser;
+  lBounds, lWorkArea : TRect;
+  lWidth, lHeight : Integer;
 begin
   lDlg := TIDSConnectDlgWebBrowser.Create(Application.MainForm);
   try
+    //Position kann das Fensterhandle neu erzeugen. Deshalb unbedingt vor
+    //ShowModal setzen, niemals in OnShow (EInvalidOperation / Visible).
+    lDlg.Position := poDesigned;
+    if Assigned(Application.MainForm) then
+    begin
+      lDlg.ScaleForPPI(Application.MainForm.CurrentPPI);
+      lWorkArea := Application.MainForm.Monitor.WorkareaRect;
+      if not IntersectRect(lBounds,Application.MainForm.BoundsRect,lWorkArea) then
+        lBounds := lWorkArea;
+    end else
+    begin
+      lDlg.ScaleForPPI(lDlg.Monitor.PixelsPerInch);
+      lBounds := lDlg.Monitor.WorkareaRect;
+    end;
+    //90 % des sichtbaren Hauptfensters, mittig und innerhalb der Arbeitsflaeche.
+    lWidth := MulDiv(lBounds.Right-lBounds.Left,90,100);
+    lHeight := MulDiv(lBounds.Bottom-lBounds.Top,90,100);
+    lDlg.SetBounds(lBounds.Left+(lBounds.Right-lBounds.Left-lWidth) div 2,
+                   lBounds.Top+(lBounds.Bottom-lBounds.Top-lHeight) div 2,
+                   lWidth,lHeight);
     lDlg.WebBrowser.UserDataFolder := ResolveCachePath(_CachePath);
     lDlg.content := _IDSHTMLValue;
     lDlg.returnUrlPrefix := _ReturnUrlPrefix;

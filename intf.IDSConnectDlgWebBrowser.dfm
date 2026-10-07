@@ -12,7 +12,6 @@ object IDSConnectDlgWebBrowser: TIDSConnectDlgWebBrowser
   Font.Style = []
   Position = poMainFormCenter
   OnShow = FormShow
-  TextHeight = 13
   object WebBrowser: TEdgeBrowser
     Left = 0
     Top = 0
@@ -22,6 +21,7 @@ object IDSConnectDlgWebBrowser: TIDSConnectDlgWebBrowser
     TabOrder = 0
     AllowSingleSignOnUsingOSPrimaryAccount = False
     TargetCompatibleBrowserVersion = '117.0.2045.28'
+    UserDataFolder = '%LOCALAPPDATA%\bds.exe.WebView2'
     OnCreateWebViewCompleted = WebBrowserCreateWebViewCompleted
     OnNavigationCompleted = WebBrowserNavigationCompleted
   end

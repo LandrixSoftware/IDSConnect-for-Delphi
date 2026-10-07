@@ -147,7 +147,7 @@ var
     Result.Align := alClient;
     Result.ReadOnly := true;
     Result.ScrollBars := ssBoth;
-    Result.WordWrap := false;
+    Result.WordWrap := true;
     Result.Font.Name := 'Consolas';
   end;
 
