@@ -7,6 +7,30 @@ Schnittstellenversionen **2.5** und **2.5.1**.
 
 Weitere Informationen unter https://www.itek.de/beratung/ids-connect
 
+## Einbinden
+
+XML wird mit [LandrixXML for Pascal](https://github.com/landrix/LandrixXML-for-Pascal)
+gelesen (MIT-Lizenz, ohne weitere Abhängigkeiten); MSXML wird nicht mehr
+benötigt. Die Bibliothek ist als Git-Submodul unter `Lib/LandrixXML`
+eingebunden und auf ein Release festgelegt (derzeit `v0.3.0`):
+
+```
+git clone --recurse-submodules https://github.com/LandrixSoftware/IDSConnect-for-Delphi.git
+# oder in einem bestehenden Klon:
+git submodule update --init
+```
+
+In eigenen Projekten zusätzlich zum Repo-Ordner `Lib\LandrixXML\source` in den
+Suchpfad aufnehmen. Ein neueres Release wird so übernommen:
+
+```
+cd Lib/LandrixXML
+git fetch --tags
+git checkout v<neue Version>
+cd ../..
+git add Lib/LandrixXML
+```
+
 ## Unterstützte Aktionen
 
 | Aktion | Code | Methode |
@@ -291,6 +315,9 @@ Für diesen WKE-Aufruf zeigt das Beispiel drei Ansichten:
   `<ids:Warenkorb xmlns:ids="…">` wird wie `<Warenkorb>` gelesen.
 * **Gemischter Inhalt:** Text und CDATA-Abschnitte eines Elements werden
   zusammengesetzt, Kommentare übersprungen.
+* **Parser:** LandrixXML prüft streng auf Wohlgeformtheit, verarbeitet keine
+  DTD und lädt nichts nach. Fehlermeldungen nennen Zeile und Spalte. Die
+  Antworten auf LI und SV werden genauso dekodiert wie die Hook-Rückgabe.
 * Scheitert das Einlesen trotzdem, ist die Rückgabe beim mitgelieferten
   PHP-Skript bereits verbraucht. Die rohen Bytes liefert
   `IDSCONNECT_ONRESPONSE` — wer sie dort sichert, verliert nichts.

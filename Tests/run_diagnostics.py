@@ -5,9 +5,12 @@ import subprocess
 import tempfile
 import threading
 import re
+import gzip
 
 
 ROOT = Path(__file__).resolve().parents[1]
+# XML library as git submodule (git submodule update --init)
+XML_SOURCE = ROOT / 'Lib' / 'LandrixXML' / 'source'
 CART = (
     '<Warenkorb><WarenkorbInfo><Version>2.5.1</Version></WarenkorbInfo>'
     '<Order><OrderItem><ArtNo>A&amp;B</ArtNo><Qty>2.5</Qty><QU>PCE</QU>'
@@ -74,13 +77,27 @@ class Handler(BaseHTTPRequestHandler):
         version = re.search(br'name="version"\r\n\r\n([^\r]+)', body)
         expected = b'2.5' if self.path == '/post25' else b'2.5.1'
         valid = version is not None and version.group(1) == expected
-        self.send_response(200 if valid else 400)
-        self.send_header('Content-Type', 'text/xml; charset=utf-8')
-        self.end_headers()
         if b'name="action"\r\n\r\nSV\r\n' in body:
-            self.wfile.write(b'<Schnittstellenversionen><Version>2.5</Version></Schnittstellenversionen>')
+            answer = '<Schnittstellenversionen><Version>2.5</Version></Schnittstellenversionen>'
         else:
-            self.wfile.write(b'<Logininformationen/>')
+            answer = '<Logininformationen/>'
+        charset, payload = 'utf-8', answer.encode()
+        if self.path == '/post-utf16':
+            # charset only in the HTTP header, no BOM
+            charset, payload = 'utf-16le', answer.encode('utf-16-le')
+        compressed = (self.path == '/post-gzip'
+                      and 'gzip' in (self.headers.get('Accept-Encoding') or ''))
+        if compressed:
+            payload = gzip.compress(payload)
+        elif self.path == '/post-gzip':
+            valid = False  # the client must offer gzip, otherwise the test proves nothing
+        self.send_response(200 if valid else 400)
+        self.send_header('Content-Type', f'text/xml; charset={charset}')
+        if compressed:
+            self.send_header('Content-Encoding', 'gzip')
+        self.send_header('Content-Length', str(len(payload)))
+        self.end_headers()
+        self.wfile.write(payload)
 
     def do_GET(self):
         transfer_id = None
@@ -115,7 +132,7 @@ class Handler(BaseHTTPRequestHandler):
 # temp folder must not turn a passed run into a failure.
 with tempfile.TemporaryDirectory(prefix='idsconnect-tests-', ignore_cleanup_errors=True) as output:
     subprocess.run([
-        'dcc32', '-B', f'-U{ROOT}',
+        'dcc32', '-B', f'-U{ROOT};{XML_SOURCE}', f'-I{XML_SOURCE}',
         '-NSSystem;Xml;Data;Datasnap;Web;Soap;Vcl;Winapi',
         f'-E{output}', f'-N0{output}', 'IDSConnectDiagnosticsTests.dpr',
     ], cwd=ROOT / 'Tests', check=True)

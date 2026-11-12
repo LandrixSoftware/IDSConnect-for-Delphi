@@ -6,7 +6,7 @@ uses
   Winapi.Windows, Winapi.Messages, System.SysUtils, System.Variants,
   System.Classes, Vcl.Graphics,Vcl.Controls, Vcl.Forms, System.UITypes,
   Vcl.Dialogs, Vcl.StdCtrls, System.Inifiles, System.StrUtils, System.IOUtils,
-  System.DateUtils, System.Math, Vcl.ComCtrls, Xml.XMLDoc
+  System.DateUtils, System.Math, Vcl.ComCtrls, LandrixXmlDom, LandrixXmlWriter
   ,intf.IDSConnectTypes,intf.IDSConnect,intf.IDSConnectDlgWebBrowser, Vcl.ExtCtrls;
 
 type
@@ -180,6 +180,7 @@ procedure TMainForm.HandleIDSResponse(const _Url : String; _StatusCode : Integer
 var
   lText, lDecl : String;
   lEncoding : TEncoding;
+  lDoc : TLandrixXmlDocument;
 begin
   Memo1.Lines.Add(FormatDateTime('hh:nn:ss',Now)+' Hook-Abruf: HTTP '+
     IntToStr(_StatusCode)+', '+IntToStr(Length(_Body))+' Bytes');
@@ -214,11 +215,25 @@ begin
     end;
     //Nur die Anzeige formatieren. FResponseBody bleibt fuer den Export
     //unveraendert; auch ungueltige XML-/HTML-Antworten bleiben sichtbar.
+    lDoc := TLandrixXmlDocument.Create;
     try
-      FRawMemo.Text := FormatXMLData(lText,2);
-    except
-      on E: Exception do
-        FRawMemo.Text := lText;
+      try
+        if Length(_Body) = 0 then
+          Abort;
+        //Nur fuer die Anzeige: Leerraum zwischen Elementen verwerfen, sonst
+        //bleibt eine teilweise formatierte Antwort ohne Einrueckung
+        lDoc.WhitespaceMode := xwmDropBetweenElements;
+        //Die Bibliothek erkennt die Kodierung selbst aus BOM und Deklaration
+        lDoc.LoadFromBuffer(_Body[0],Length(_Body));
+        lDoc.Indent := true;
+        lDoc.LineBreak := xlbCRLF;
+        FRawMemo.Text := lDoc.SaveToString;
+      except
+        on E: Exception do
+          FRawMemo.Text := lText;
+      end;
+    finally
+      lDoc.Free;
     end;
   finally
     lEncoding.Free;

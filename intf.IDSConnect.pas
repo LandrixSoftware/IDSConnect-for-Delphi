@@ -20,13 +20,8 @@ unit intf.IDSConnect;
 interface
 
 uses
-  System.SysUtils,System.Classes,System.Contnrs,System.DateUtils
-  ,System.StrUtils,System.Types,System.Generics.Collections,System.UITypes
-  ,Vcl.Dialogs, WinApi.ShellAPI, WinApi.Windows,Vcl.Controls
-  ,System.Net.HttpClient,System.Net.URLClient,System.Net.Mime
-  ,Xml.XMLIntf, Xml.XMLDoc, Xml.xmldom
-  ,intf.IDSConnectTypes,intf.IDSConnectDlgWebBrowser,intf.IDSConnectDlgWait
-  ;
+  System.SysUtils, System.Classes, System.Net.URLClient, LandrixXmlDom,
+  intf.IDSConnectTypes;
 
 type
   TIDSConnectOnException = reference to procedure (const _Message : String; _E : Exception);
@@ -108,7 +103,7 @@ type
     class function PostAction(const _ServiceURL,_Action : String; out _Response : String;
       _Version : TIDSConnect_Version) : Boolean;
     //Wurzelknoten der Antwort einer Abfrage; nil bei Fehler
-    class function ParseResponse(const _Response,_RootName : String; out _Doc : IXMLDocument) : IXMLNode;
+    class function ParseResponse(const _Response,_RootName : String; out _Doc : TLandrixXmlDocument) : TLandrixXmlNode;
     //Wartet mit Fortschrittsdialog, bis die Rueckuebertragung eingetroffen
     //ist, der Anwender abbricht oder das Timeout ablaeuft.
     class function WaitForResult(const _Url : String;_Warenkorb : TIDSConnect_Warenkorb;
@@ -208,23 +203,23 @@ type
 
   TIDSConnect_WarenkorbHelper = class helper for TIDSConnect_Warenkorb
   private
-    function  UnusedObj(_Node: IXMLNode): Boolean;
-//    procedure ProtocolErrorObj(_Node: IXMLNode);
+    function  UnusedObj(_Node: TLandrixXmlNode): Boolean;
+//    procedure ProtocolErrorObj(_Node: TLandrixXmlNode);
 //    //procedure Protocol (const _Msg : String;_Type : TProtocolEventType);
-//    procedure ProtocolUnknownObj(_Node : IXMLNode);
+//    procedure ProtocolUnknownObj(_Node : TLandrixXmlNode);
   private
-    function  idsWarenkorb(_Node : IXMLNode) : Boolean;
-    function  idsWarenkorbInfo(_Node : IXMLNode;_obj : TIDSConnect_WarenkorbInfo) : Boolean;
-    function  idsOrder(_Node : IXMLNode; _Obj : TIDSConnect_Order) : Boolean;
-    function  idsOrderInfo(_Node : IXMLNode;_Obj : TIDSConnect_OrderInfo) : Boolean;
-    function  idsOrderItem(_Node : IXMLNode;_Obj : TIDSConnect_OrderItemList) : Boolean;
-    function  idsReferenz(_Node : IXMLNode;_Obj : TIDSConnect_Referenz) : Boolean;
-    function  idsRohstoffanteil(_Node : IXMLNode;_Obj : TIDSConnect_RohstoffanteilList) : Boolean;
-    function  idsRefItems(_Node : IXMLNode;_Obj : TIDSConnect_OrderItem) : Boolean;
-    function  idsSupplierInfo(_Node : IXMLNode;_Obj : TIDSConnect_SupplierInfo) : Boolean;
-    function  idsCustomerInfo(_Node : IXMLNode;_Obj : TIDSConnect_CustomerInfo) : Boolean;
-    function  idsDeliveryPlaceInfo(_Node : IXMLNode;_Obj : TIDSConnect_DeliveryPlaceInfo) : Boolean;
-    function  idsAddress(_Node : IXMLNode;_Obj : TIDSConnect_Address) : Boolean;
+    function  idsWarenkorb(_Node : TLandrixXmlNode) : Boolean;
+    function  idsWarenkorbInfo(_Node : TLandrixXmlNode;_obj : TIDSConnect_WarenkorbInfo) : Boolean;
+    function  idsOrder(_Node : TLandrixXmlNode; _Obj : TIDSConnect_Order) : Boolean;
+    function  idsOrderInfo(_Node : TLandrixXmlNode;_Obj : TIDSConnect_OrderInfo) : Boolean;
+    function  idsOrderItem(_Node : TLandrixXmlNode;_Obj : TIDSConnect_OrderItemList) : Boolean;
+    function  idsReferenz(_Node : TLandrixXmlNode;_Obj : TIDSConnect_Referenz) : Boolean;
+    function  idsRohstoffanteil(_Node : TLandrixXmlNode;_Obj : TIDSConnect_RohstoffanteilList) : Boolean;
+    function  idsRefItems(_Node : TLandrixXmlNode;_Obj : TIDSConnect_OrderItem) : Boolean;
+    function  idsSupplierInfo(_Node : TLandrixXmlNode;_Obj : TIDSConnect_SupplierInfo) : Boolean;
+    function  idsCustomerInfo(_Node : TLandrixXmlNode;_Obj : TIDSConnect_CustomerInfo) : Boolean;
+    function  idsDeliveryPlaceInfo(_Node : TLandrixXmlNode;_Obj : TIDSConnect_DeliveryPlaceInfo) : Boolean;
+    function  idsAddress(_Node : TLandrixXmlNode;_Obj : TIDSConnect_Address) : Boolean;
   public
     function LoadFromFile(const _Filename : String) : Boolean;
     function LoadFromStream(_Stream : TStream) : Boolean;
@@ -235,7 +230,9 @@ type
 implementation
 
 uses
-  System.Math, System.Variants;
+  System.Math, System.DateUtils, System.StrUtils, Winapi.ShellAPI,
+  Winapi.Windows, System.Net.HttpClient, System.Net.Mime,
+  intf.IDSConnectDlgWebBrowser, intf.IDSConnectDlgWait;
 
 const
   TIDSConnect_XMLNameSpace = 'http://www.itek.de/Shop-Anbindung/Warenkorb/';
@@ -247,30 +244,15 @@ const
   TIDSConnect_CurrentVersionStr = '2.5.1';
 
 //Textinhalt eines Elements: alle Text- und CDATA-Teile, auch in
-//untergeordneten Elementen, ohne Kommentare. IXMLNode.Text wirft dagegen eine
-//Exception, sobald ein Element mehr als einen Textknoten hat (Text plus CDATA,
-//Text mit Kommentar) - der ganze Warenkorb scheiterte daran.
-function NodeText(_Node : IXMLNode) : String;
-var
-  i : Integer;
-  lChild : IXMLNode;
+//untergeordneten Elementen, ohne Kommentare (TLandrixXmlNode.Text). Das
+//fruehere IXMLNode.Text von MSXML warf dagegen eine Exception, sobald ein
+//Element mehr als einen Textknoten hatte.
+function NodeText(_Node : TLandrixXmlNode) : String;
 begin
-  Result := '';
   if _Node = nil then
-    exit;
-  if _Node.NodeType in [ntText,ntCData] then
-  begin
-    Result := VarToStr(_Node.NodeValue);
-    exit;
-  end;
-  for i := 0 to _Node.ChildNodes.Count-1 do
-  begin
-    lChild := _Node.ChildNodes[i];
-    case lChild.NodeType of
-      ntText,ntCData : Result := Result+VarToStr(lChild.NodeValue);
-      ntElement      : Result := Result+NodeText(lChild);
-    end;
-  end;
+    Result := ''
+  else
+    Result := _Node.Text;
 end;
 
 //true, wenn die Bytes gueltiges UTF-8 sind und mindestens ein Nicht-ASCII-
@@ -356,9 +338,27 @@ begin
     Result := 0;
 end;
 
+//Stellt die XML-Deklaration eines bereits dekodierten Strings auf UTF-8 um
+function XmlDeclToUtf8(const _Xml : String) : String;
+var
+  lDeclStart, lDeclEnd : Integer;
+begin
+  Result := _Xml;
+  lDeclStart := Pos('<?xml',Result);
+  if (lDeclStart > 0) and (Trim(Copy(Result,1,lDeclStart-1)) = '') then
+  begin
+    lDeclEnd := PosEx('?>',Result,lDeclStart);
+    if lDeclEnd > 0 then
+      Result := '<?xml version="1.0" encoding="UTF-8"?>'+
+                Copy(Result,lDeclEnd+2,MaxInt);
+  end;
+end;
+
 //Dekodiert eine Warenkorb-Rueckgabe zu einem String und gleicht die
-//Deklaration an (MSXML lehnt einen Unicode-String ab, dessen Deklaration
-//eine Byte-Kodierung nennt). Frueher wurde nach "8859" oder "1252" irgendwo
+//Deklaration auf UTF-8 an: TLandrixXmlDocument.LoadFromString liest den
+//String als UTF-8, eine Deklaration mit Byte-Kodierung passte nicht dazu.
+//Die eigene Erkennung bleibt, weil sie nachsichtiger ist als die Bibliothek
+//(Windows-1250/ISO-8859-2, falsch deklariertes UTF-8). Frueher wurde nach "8859" oder "1252" irgendwo
 //in den ersten 200 Zeichen gesucht und dann mit der Systemcodepage
 //(TEncoding.ANSI) gelesen: eine Artikelnummer "B-1252" machte aus UTF-8
 //Mojibake, und auf Systemen mit anderer Codepage wurde Latin-1 falsch gelesen.
@@ -403,15 +403,7 @@ begin
         lEncoding.Free;
     end;
   end;
-  //Die Deklaration im String auf UTF-8 umstellen bzw. entfernen
-  lDeclStart := Pos('<?xml',Result);
-  if (lDeclStart > 0) and (Trim(Copy(Result,1,lDeclStart-1)) = '') then
-  begin
-    lDeclEnd := PosEx('?>',Result,lDeclStart);
-    if lDeclEnd > 0 then
-      Result := '<?xml version="1.0" encoding="UTF-8"?>'+
-                Copy(Result,lDeclEnd+2,MaxInt);
-  end;
+  Result := XmlDeclToUtf8(Result);
 end;
 
 { TIDSConnectHelper }
@@ -752,366 +744,366 @@ end;
 
 { TIDSConnect_WarenkorbHelper }
 
-function TIDSConnect_WarenkorbHelper.idsAddress(_Node: IXMLNode;
+function TIDSConnect_WarenkorbHelper.idsAddress(_Node: TLandrixXmlNode;
   _Obj: TIDSConnect_Address): Boolean;
 var
   i : Integer;
 begin
   Result := true;
-  for i := 0 to _Node.ChildNodes.Count -1 do
+  for i := 0 to _Node.ChildCount -1 do
   begin
-    if UnusedObj(_Node.ChildNodes[i]) then continue;
+    if UnusedObj(_Node.Children[i]) then continue;
 
-    if SameText(_Node.ChildNodes[i].LocalName,'Name1') then
+    if SameText(_Node.Children[i].LocalName,'Name1') then
     begin
-      _Obj.Name1 := NodeText(_Node.ChildNodes[i]);
+      _Obj.Name1 := NodeText(_Node.Children[i]);
       continue;
     end;
-    if SameText(_Node.ChildNodes[i].LocalName,'Name2') then
+    if SameText(_Node.Children[i].LocalName,'Name2') then
     begin
-      _Obj.Name2 := NodeText(_Node.ChildNodes[i]);
+      _Obj.Name2 := NodeText(_Node.Children[i]);
       continue;
     end;
-    if SameText(_Node.ChildNodes[i].LocalName,'Name3') then
+    if SameText(_Node.Children[i].LocalName,'Name3') then
     begin
-      _Obj.Name3 := NodeText(_Node.ChildNodes[i]);
+      _Obj.Name3 := NodeText(_Node.Children[i]);
       continue;
     end;
-    if SameText(_Node.ChildNodes[i].LocalName,'Name4') then
+    if SameText(_Node.Children[i].LocalName,'Name4') then
     begin
-      _Obj.Name4 := NodeText(_Node.ChildNodes[i]);
+      _Obj.Name4 := NodeText(_Node.Children[i]);
       continue;
     end;
-    if SameText(_Node.ChildNodes[i].LocalName,'Street') then
+    if SameText(_Node.Children[i].LocalName,'Street') then
     begin
-      _Obj.Street := NodeText(_Node.ChildNodes[i]);
+      _Obj.Street := NodeText(_Node.Children[i]);
       //Damit Aufrufer, die nur Street1 auswerten, auch 2.5-Daten sehen
       if _Obj.Street1 = '' then
         _Obj.Street1 := _Obj.Street;
       continue;
     end;
     //Street1..Street3 ersetzen ab IDS 2.5.1 das einzelne Street-Element
-    if SameText(_Node.ChildNodes[i].LocalName,'Street1') then
+    if SameText(_Node.Children[i].LocalName,'Street1') then
     begin
-      _Obj.Street1 := NodeText(_Node.ChildNodes[i]);
+      _Obj.Street1 := NodeText(_Node.Children[i]);
       if _Obj.Street = '' then
         _Obj.Street := _Obj.Street1;
       continue;
     end;
-    if SameText(_Node.ChildNodes[i].LocalName,'Street2') then
+    if SameText(_Node.Children[i].LocalName,'Street2') then
     begin
-      _Obj.Street2 := NodeText(_Node.ChildNodes[i]);
+      _Obj.Street2 := NodeText(_Node.Children[i]);
       continue;
     end;
-    if SameText(_Node.ChildNodes[i].LocalName,'Street3') then
+    if SameText(_Node.Children[i].LocalName,'Street3') then
     begin
-      _Obj.Street3 := NodeText(_Node.ChildNodes[i]);
+      _Obj.Street3 := NodeText(_Node.Children[i]);
       continue;
     end;
-    if SameText(_Node.ChildNodes[i].LocalName,'PCode') then
+    if SameText(_Node.Children[i].LocalName,'PCode') then
     begin
-      _Obj.PCode := NodeText(_Node.ChildNodes[i]);
+      _Obj.PCode := NodeText(_Node.Children[i]);
       continue;
     end;
-    if SameText(_Node.ChildNodes[i].LocalName,'City') then
+    if SameText(_Node.Children[i].LocalName,'City') then
     begin
-      _Obj.City := NodeText(_Node.ChildNodes[i]);
+      _Obj.City := NodeText(_Node.Children[i]);
       continue;
     end;
-    if SameText(_Node.ChildNodes[i].LocalName,'Country') then
+    if SameText(_Node.Children[i].LocalName,'Country') then
     begin
-      _Obj.Country := NodeText(_Node.ChildNodes[i]);
+      _Obj.Country := NodeText(_Node.Children[i]);
       continue;
     end;
-    if SameText(_Node.ChildNodes[i].LocalName,'ILN') then
+    if SameText(_Node.Children[i].LocalName,'ILN') then
     begin
-      _Obj.ILN := NodeText(_Node.ChildNodes[i]);
+      _Obj.ILN := NodeText(_Node.Children[i]);
       continue;
     end;
-    if SameText(_Node.ChildNodes[i].LocalName,'Contact') then
+    if SameText(_Node.Children[i].LocalName,'Contact') then
     begin
-      _Obj.Contact := NodeText(_Node.ChildNodes[i]);
+      _Obj.Contact := NodeText(_Node.Children[i]);
       continue;
     end;
-    if SameText(_Node.ChildNodes[i].LocalName,'Phone') then
+    if SameText(_Node.Children[i].LocalName,'Phone') then
     begin
-      _Obj.Phone := NodeText(_Node.ChildNodes[i]);
+      _Obj.Phone := NodeText(_Node.Children[i]);
       continue;
     end;
-    if SameText(_Node.ChildNodes[i].LocalName,'Fax') then
+    if SameText(_Node.Children[i].LocalName,'Fax') then
     begin
-      _Obj.Fax := NodeText(_Node.ChildNodes[i]);
+      _Obj.Fax := NodeText(_Node.Children[i]);
       continue;
     end;
-    if SameText(_Node.ChildNodes[i].LocalName,'Email') then
+    if SameText(_Node.Children[i].LocalName,'Email') then
     begin
-      _Obj.Email := NodeText(_Node.ChildNodes[i]);
+      _Obj.Email := NodeText(_Node.Children[i]);
       continue;
     end;
-    //ProtocolUnknownObj(_Node.ChildNodes[i]);
+    //ProtocolUnknownObj(_Node.Children[i]);
   end;
 end;
 
-function TIDSConnect_WarenkorbHelper.idsCustomerInfo(_Node: IXMLNode;
+function TIDSConnect_WarenkorbHelper.idsCustomerInfo(_Node: TLandrixXmlNode;
   _Obj: TIDSConnect_CustomerInfo): Boolean;
 var
   i : Integer;
 begin
   Result := true;
-  for i := 0 to _Node.ChildNodes.Count -1 do
+  for i := 0 to _Node.ChildCount -1 do
   begin
-    if UnusedObj(_Node.ChildNodes[i]) then continue;
+    if UnusedObj(_Node.Children[i]) then continue;
 
-    if SameText(_Node.ChildNodes[i].LocalName,'IDNo') then
+    if SameText(_Node.Children[i].LocalName,'IDNo') then
     begin
-      _Obj.IDNo := NodeText(_Node.ChildNodes[i]);
+      _Obj.IDNo := NodeText(_Node.Children[i]);
       continue;
     end;
-    if SameText(_Node.ChildNodes[i].LocalName,'Address') then
+    if SameText(_Node.Children[i].LocalName,'Address') then
     begin
-      Result := idsAddress(_Node.ChildNodes[i],_Obj.Address);
+      Result := idsAddress(_Node.Children[i],_Obj.Address);
       if not Result then
       begin
-        //ProtocolErrorObj(_Node.ChildNodes[i]);
+        //ProtocolErrorObj(_Node.Children[i]);
         break;
       end else
         continue;
     end;
 
-    //ProtocolUnknownObj(_Node.ChildNodes[i]);
+    //ProtocolUnknownObj(_Node.Children[i]);
   end;
 end;
 
-function TIDSConnect_WarenkorbHelper.idsDeliveryPlaceInfo(_Node: IXMLNode;
+function TIDSConnect_WarenkorbHelper.idsDeliveryPlaceInfo(_Node: TLandrixXmlNode;
   _Obj: TIDSConnect_DeliveryPlaceInfo): Boolean;
 var
   i : Integer;
 begin
   Result := true;
-  for i := 0 to _Node.ChildNodes.Count -1 do
+  for i := 0 to _Node.ChildCount -1 do
   begin
-    if UnusedObj(_Node.ChildNodes[i]) then continue;
+    if UnusedObj(_Node.Children[i]) then continue;
 
-    if SameText(_Node.ChildNodes[i].LocalName,'IDNo') then
+    if SameText(_Node.Children[i].LocalName,'IDNo') then
     begin
-      _Obj.IDNo := NodeText(_Node.ChildNodes[i]);
+      _Obj.IDNo := NodeText(_Node.Children[i]);
       continue;
     end;
-    if SameText(_Node.ChildNodes[i].LocalName,'Address') then
+    if SameText(_Node.Children[i].LocalName,'Address') then
     begin
-      Result := idsAddress(_Node.ChildNodes[i],_Obj.Address);
+      Result := idsAddress(_Node.Children[i],_Obj.Address);
       if not Result then
       begin
-        //ProtocolErrorObj(_Node.ChildNodes[i]);
+        //ProtocolErrorObj(_Node.Children[i]);
         break;
       end else
         continue;
     end;
     //Geo-Daten ab IDS 2.5.1
-    if SameText(_Node.ChildNodes[i].LocalName,'GeoLat') then
+    if SameText(_Node.Children[i].LocalName,'GeoLat') then
     begin
-      _Obj.GeoLat := TIDSConnectHelper.StrToFloat(NodeText(_Node.ChildNodes[i]),0);
+      _Obj.GeoLat := TIDSConnectHelper.StrToFloat(NodeText(_Node.Children[i]),0);
       _Obj.HasGeoLocation := true;
       continue;
     end;
-    if SameText(_Node.ChildNodes[i].LocalName,'GeoLang') then
+    if SameText(_Node.Children[i].LocalName,'GeoLang') then
     begin
-      _Obj.GeoLang := TIDSConnectHelper.StrToFloat(NodeText(_Node.ChildNodes[i]),0);
+      _Obj.GeoLang := TIDSConnectHelper.StrToFloat(NodeText(_Node.Children[i]),0);
       _Obj.HasGeoLocation := true;
       continue;
     end;
 
-    //ProtocolUnknownObj(_Node.ChildNodes[i]);
+    //ProtocolUnknownObj(_Node.Children[i]);
   end;
 end;
 
-function TIDSConnect_WarenkorbHelper.idsOrder(_Node: IXMLNode; _Obj : TIDSConnect_Order): Boolean;
+function TIDSConnect_WarenkorbHelper.idsOrder(_Node: TLandrixXmlNode; _Obj : TIDSConnect_Order): Boolean;
 var
   i : Integer;
 begin
   Result := true;
-  for i := 0 to _Node.ChildNodes.Count -1 do
+  for i := 0 to _Node.ChildCount -1 do
   begin
-    if UnusedObj(_Node.ChildNodes[i]) then continue;
+    if UnusedObj(_Node.Children[i]) then continue;
 
-    if SameText(_Node.ChildNodes[i].LocalName,'OrderInfo') then
+    if SameText(_Node.Children[i].LocalName,'OrderInfo') then
     begin
-      Result := idsOrderInfo(_Node.ChildNodes[i],_Obj.OrderInfo);
+      Result := idsOrderInfo(_Node.Children[i],_Obj.OrderInfo);
       if not Result then
       begin
-        //ProtocolErrorObj(_Node.ChildNodes[i]);
+        //ProtocolErrorObj(_Node.Children[i]);
         break;
       end else
         continue;
      end;
 
-    if SameText(_Node.ChildNodes[i].LocalName,'SupplierInfo') then
+    if SameText(_Node.Children[i].LocalName,'SupplierInfo') then
     begin
-      Result := idsSupplierInfo(_Node.ChildNodes[i],_Obj.SupplierInfo);
+      Result := idsSupplierInfo(_Node.Children[i],_Obj.SupplierInfo);
       if not Result then
       begin
-        //ProtocolErrorObj(_Node.ChildNodes[i]);
+        //ProtocolErrorObj(_Node.Children[i]);
         break;
       end else
         continue;
      end;
 
-    if SameText(_Node.ChildNodes[i].LocalName,'CustomerInfo') then
+    if SameText(_Node.Children[i].LocalName,'CustomerInfo') then
     begin
-      Result := idsCustomerInfo(_Node.ChildNodes[i],_Obj.CustomerInfo);
+      Result := idsCustomerInfo(_Node.Children[i],_Obj.CustomerInfo);
       if not Result then
       begin
-        //ProtocolErrorObj(_Node.ChildNodes[i]);
+        //ProtocolErrorObj(_Node.Children[i]);
         break;
       end else
         continue;
      end;
 
-    if SameText(_Node.ChildNodes[i].LocalName,'DeliveryPlaceInfo') then
+    if SameText(_Node.Children[i].LocalName,'DeliveryPlaceInfo') then
     begin
-      Result := idsDeliveryPlaceInfo(_Node.ChildNodes[i],_Obj.DeliveryPlaceInfo);
+      Result := idsDeliveryPlaceInfo(_Node.Children[i],_Obj.DeliveryPlaceInfo);
       if not Result then
       begin
-        //ProtocolErrorObj(_Node.ChildNodes[i]);
+        //ProtocolErrorObj(_Node.Children[i]);
         break;
       end else
         continue;
      end;
 
-    if SameText(_Node.ChildNodes[i].LocalName,'OrderItem') then
+    if SameText(_Node.Children[i].LocalName,'OrderItem') then
     begin
-      Result := idsOrderItem(_Node.ChildNodes[i],_Obj.OrderItems);
+      Result := idsOrderItem(_Node.Children[i],_Obj.OrderItems);
       if not Result then
       begin
-        //ProtocolErrorObj(_Node.ChildNodes[i]);
+        //ProtocolErrorObj(_Node.Children[i]);
         break;
       end else
         continue;
     end;
 
-    //ProtocolUnknownObj(_Node.ChildNodes[i]);
+    //ProtocolUnknownObj(_Node.Children[i]);
   end;
 end;
 
-function TIDSConnect_WarenkorbHelper.idsReferenz(_Node: IXMLNode;
+function TIDSConnect_WarenkorbHelper.idsReferenz(_Node: TLandrixXmlNode;
   _Obj: TIDSConnect_Referenz): Boolean;
 var
   i : Integer;
 begin
   Result := true;
-  for i := 0 to _Node.ChildNodes.Count -1 do
+  for i := 0 to _Node.ChildCount -1 do
   begin
-    if UnusedObj(_Node.ChildNodes[i]) then continue;
+    if UnusedObj(_Node.Children[i]) then continue;
 
-    if SameText(_Node.ChildNodes[i].LocalName,'ReferenzNumber') then
+    if SameText(_Node.Children[i].LocalName,'ReferenzNumber') then
     begin
-      _Obj.ReferenzNumber := NodeText(_Node.ChildNodes[i]);
+      _Obj.ReferenzNumber := NodeText(_Node.Children[i]);
       continue;
     end;
-    if SameText(_Node.ChildNodes[i].LocalName,'ReferenzDate') then
+    if SameText(_Node.Children[i].LocalName,'ReferenzDate') then
     begin
-      _Obj.ReferenzDate := TIDSConnectHelper.DateStrToDate(NodeText(_Node.ChildNodes[i]));
+      _Obj.ReferenzDate := TIDSConnectHelper.DateStrToDate(NodeText(_Node.Children[i]));
       continue;
     end;
-    if SameText(_Node.ChildNodes[i].LocalName,'ReferenzType') then
+    if SameText(_Node.Children[i].LocalName,'ReferenzType') then
     begin
-      _Obj.ReferenzType := TIDSConnectHelper.ReferenzTypeFromStr(NodeText(_Node.ChildNodes[i]));
+      _Obj.ReferenzType := TIDSConnectHelper.ReferenzTypeFromStr(NodeText(_Node.Children[i]));
       continue;
     end;
     //ReferenzLine gibt es nur in den Positionsdaten
-    if SameText(_Node.ChildNodes[i].LocalName,'ReferenzLine') and (_Obj is TIDSConnect_ReferenzPos) then
+    if SameText(_Node.Children[i].LocalName,'ReferenzLine') and (_Obj is TIDSConnect_ReferenzPos) then
     begin
-      TIDSConnect_ReferenzPos(_Obj).ReferenzLine := NodeText(_Node.ChildNodes[i]);
+      TIDSConnect_ReferenzPos(_Obj).ReferenzLine := NodeText(_Node.Children[i]);
       continue;
     end;
 
-    //ProtocolUnknownObj(_Node.ChildNodes[i]);
+    //ProtocolUnknownObj(_Node.Children[i]);
   end;
 end;
 
-function TIDSConnect_WarenkorbHelper.idsOrderInfo(_Node: IXMLNode;
+function TIDSConnect_WarenkorbHelper.idsOrderInfo(_Node: TLandrixXmlNode;
   _Obj: TIDSConnect_OrderInfo): Boolean;
 var
   i : Integer;
 begin
   Result := true;
-  for i := 0 to _Node.ChildNodes.Count -1 do
+  for i := 0 to _Node.ChildCount -1 do
   begin
-    if UnusedObj(_Node.ChildNodes[i]) then continue;
+    if UnusedObj(_Node.Children[i]) then continue;
 
     //Referenzen ersetzen ab IDS 2.5.1 InquiryNo/OfferNo/PartNo/OrderConfNo
-    if SameText(_Node.ChildNodes[i].LocalName,'Referenz') then
+    if SameText(_Node.Children[i].LocalName,'Referenz') then
     begin
-      Result := idsReferenz(_Node.ChildNodes[i],_Obj.Referenzen.AddItem);
+      Result := idsReferenz(_Node.Children[i],_Obj.Referenzen.AddItem);
       if not Result then
         break
       else
         continue;
     end;
-    if SameText(_Node.ChildNodes[i].LocalName,'InquiryNo') then
+    if SameText(_Node.Children[i].LocalName,'InquiryNo') then
     begin
-      _Obj.InquiryNo := NodeText(_Node.ChildNodes[i]);
+      _Obj.InquiryNo := NodeText(_Node.Children[i]);
       continue;
     end;
-    if SameText(_Node.ChildNodes[i].LocalName,'OfferNo') then
+    if SameText(_Node.Children[i].LocalName,'OfferNo') then
     begin
-      _Obj.OfferNo := NodeText(_Node.ChildNodes[i]);
+      _Obj.OfferNo := NodeText(_Node.Children[i]);
       continue;
     end;
-    if SameText(_Node.ChildNodes[i].LocalName,'PartNo') then
+    if SameText(_Node.Children[i].LocalName,'PartNo') then
     begin
-      _Obj.PartNo := NodeText(_Node.ChildNodes[i]);
+      _Obj.PartNo := NodeText(_Node.Children[i]);
       continue;
     end;
-    if SameText(_Node.ChildNodes[i].LocalName,'OrderConfNo') then
+    if SameText(_Node.Children[i].LocalName,'OrderConfNo') then
     begin
-      _Obj.OrderConfNo := NodeText(_Node.ChildNodes[i]);
+      _Obj.OrderConfNo := NodeText(_Node.Children[i]);
       continue;
     end;
-    if SameText(_Node.ChildNodes[i].LocalName,'DeliveryWeek') then
+    if SameText(_Node.Children[i].LocalName,'DeliveryWeek') then
     begin
-      _Obj.DeliveryWeek := StrToIntDef(NodeText(_Node.ChildNodes[i]),0);
+      _Obj.DeliveryWeek := StrToIntDef(NodeText(_Node.Children[i]),0);
       continue;
     end;
-    if SameText(_Node.ChildNodes[i].LocalName,'DeliveryYear') then
+    if SameText(_Node.Children[i].LocalName,'DeliveryYear') then
     begin
-      _Obj.DeliveryYear := StrToIntDef(NodeText(_Node.ChildNodes[i]),0);
+      _Obj.DeliveryYear := StrToIntDef(NodeText(_Node.Children[i]),0);
       continue;
     end;
-    if SameText(_Node.ChildNodes[i].LocalName,'DeliveryDate') then
+    if SameText(_Node.Children[i].LocalName,'DeliveryDate') then
     begin
-      _Obj.DeliveryDate := TIDSConnectHelper.DateStrToDate(NodeText(_Node.ChildNodes[i]));
+      _Obj.DeliveryDate := TIDSConnectHelper.DateStrToDate(NodeText(_Node.Children[i]));
       continue;
     end;
-    if SameText(_Node.ChildNodes[i].LocalName,'ModeOfShipment') then
+    if SameText(_Node.Children[i].LocalName,'ModeOfShipment') then
     begin
-      if (Pos('LIEFERUNG',UpperCase(NodeText(_Node.ChildNodes[i])))>0) then
+      if (Pos('LIEFERUNG',UpperCase(NodeText(_Node.Children[i])))>0) then
         _Obj.ModeOfShipment := idsConnectMos_Lieferung
       else
         _Obj.ModeOfShipment := idsConnectMos_Abholung;
       continue;
     end;
-    if SameText(_Node.ChildNodes[i].LocalName,'ZusatzText') then
+    if SameText(_Node.Children[i].LocalName,'ZusatzText') then
     begin
-      _Obj.ZusatzText := NodeText(_Node.ChildNodes[i]);
+      _Obj.ZusatzText := NodeText(_Node.Children[i]);
       continue;
     end;
-    if SameText(_Node.ChildNodes[i].LocalName,'Kommission') then
+    if SameText(_Node.Children[i].LocalName,'Kommission') then
     begin
-      _Obj.Kommission := NodeText(_Node.ChildNodes[i]);
+      _Obj.Kommission := NodeText(_Node.Children[i]);
       continue;
     end;
-    if SameText(_Node.ChildNodes[i].LocalName,'Cur') then
+    if SameText(_Node.Children[i].LocalName,'Cur') then
     begin
-      _Obj.Cur := NodeText(_Node.ChildNodes[i]);
+      _Obj.Cur := NodeText(_Node.Children[i]);
       continue;
     end;
 
-    //ProtocolUnknownObj(_Node.ChildNodes[i]);
+    //ProtocolUnknownObj(_Node.Children[i]);
   end;
 end;
 
-function TIDSConnect_WarenkorbHelper.idsOrderItem(_Node: IXMLNode;
+function TIDSConnect_WarenkorbHelper.idsOrderItem(_Node: TLandrixXmlNode;
   _Obj: TIDSConnect_OrderItemList): Boolean;
 var
   i : Integer;
@@ -1120,193 +1112,193 @@ begin
   Result := true;
   itm := _Obj.AddItem;
 
-  for i := 0 to _Node.ChildNodes.Count -1 do
+  for i := 0 to _Node.ChildCount -1 do
   begin
-    if UnusedObj(_Node.ChildNodes[i]) then continue;
+    if UnusedObj(_Node.Children[i]) then continue;
 
-    if SameText(_Node.ChildNodes[i].LocalName,'ItemChara') then
+    if SameText(_Node.Children[i].LocalName,'ItemChara') then
     begin
-      if SameText('alternate',NodeText(_Node.ChildNodes[i])) then
+      if SameText('alternate',NodeText(_Node.Children[i])) then
         itm.ItemChara := idsConnectIc_alternate
       else
-      if SameText('provis',NodeText(_Node.ChildNodes[i])) then
+      if SameText('provis',NodeText(_Node.Children[i])) then
         itm.ItemChara := idsConnectIc_provis
       else
         itm.ItemChara := idsConnectIc_normal;
       continue;
     end;
-    if SameText(_Node.ChildNodes[i].LocalName,'RefItems') then
+    if SameText(_Node.Children[i].LocalName,'RefItems') then
     begin
-      Result := idsRefItems(_Node.ChildNodes[i],itm);
+      Result := idsRefItems(_Node.Children[i],itm);
       if not Result then
       begin
-        //ProtocolErrorObj(_Node.ChildNodes[i]);
+        //ProtocolErrorObj(_Node.Children[i]);
         break;
       end else
         continue;
     end;
-    if SameText(_Node.ChildNodes[i].LocalName,'EAN') then
+    if SameText(_Node.Children[i].LocalName,'EAN') then
     begin
-      itm.EAN := NodeText(_Node.ChildNodes[i]);
+      itm.EAN := NodeText(_Node.Children[i]);
       continue;
     end;
-    if SameText(_Node.ChildNodes[i].LocalName,'ManufacturerID') then
+    if SameText(_Node.Children[i].LocalName,'ManufacturerID') then
     begin
-      itm.ManufacturerID := NodeText(_Node.ChildNodes[i]);
+      itm.ManufacturerID := NodeText(_Node.Children[i]);
       continue;
     end;
-    if SameText(_Node.ChildNodes[i].LocalName,'ManufacturerIDType') then
+    if SameText(_Node.Children[i].LocalName,'ManufacturerIDType') then
     begin
-      itm.ManufacturerIDType := NodeText(_Node.ChildNodes[i]);
+      itm.ManufacturerIDType := NodeText(_Node.Children[i]);
       continue;
     end;
-    if SameText(_Node.ChildNodes[i].LocalName,'ArtNo') then
+    if SameText(_Node.Children[i].LocalName,'ArtNo') then
     begin
-      itm.ArtNo := NodeText(_Node.ChildNodes[i]);
+      itm.ArtNo := NodeText(_Node.Children[i]);
       continue;
     end;
-    if SameText(_Node.ChildNodes[i].LocalName,'Qty') then
+    if SameText(_Node.Children[i].LocalName,'Qty') then
     begin
-      itm.Qty := TIDSConnectHelper.StrToFloat(NodeText(_Node.ChildNodes[i]),0);
+      itm.Qty := TIDSConnectHelper.StrToFloat(NodeText(_Node.Children[i]),0);
       continue;
     end;
-    if SameText(_Node.ChildNodes[i].LocalName,'QU') then
+    if SameText(_Node.Children[i].LocalName,'QU') then
     begin
-      itm.QU := TIDSConnectHelper.QuStrToQu(NodeText(_Node.ChildNodes[i]));
+      itm.QU := TIDSConnectHelper.QuStrToQu(NodeText(_Node.Children[i]));
       continue;
     end;
-    if SameText(_Node.ChildNodes[i].LocalName,'Kurztext') then
+    if SameText(_Node.Children[i].LocalName,'Kurztext') then
     begin
-      itm.Kurztext := NodeText(_Node.ChildNodes[i]);
+      itm.Kurztext := NodeText(_Node.Children[i]);
       continue;
     end;
-    if SameText(_Node.ChildNodes[i].LocalName,'Langtext') then
+    if SameText(_Node.Children[i].LocalName,'Langtext') then
     begin
-      itm.Langtext := NodeText(_Node.ChildNodes[i]);
+      itm.Langtext := NodeText(_Node.Children[i]);
       continue;
     end;
-    if SameText(_Node.ChildNodes[i].LocalName,'OfferPrice') then
+    if SameText(_Node.Children[i].LocalName,'OfferPrice') then
     begin
-      itm.OfferPrice := TIDSConnectHelper.StrToFloat(NodeText(_Node.ChildNodes[i]),0);
+      itm.OfferPrice := TIDSConnectHelper.StrToFloat(NodeText(_Node.Children[i]),0);
       continue;
     end;
-    if SameText(_Node.ChildNodes[i].LocalName,'NetPrice') then
+    if SameText(_Node.Children[i].LocalName,'NetPrice') then
     begin
-      itm.NetPrice := TIDSConnectHelper.StrToFloat(NodeText(_Node.ChildNodes[i]),0);
+      itm.NetPrice := TIDSConnectHelper.StrToFloat(NodeText(_Node.Children[i]),0);
       continue;
     end;
-    if SameText(_Node.ChildNodes[i].LocalName,'PriceBasis') then
+    if SameText(_Node.Children[i].LocalName,'PriceBasis') then
     begin
-      itm.PriceBasis := TIDSConnectHelper.StrToFloat(NodeText(_Node.ChildNodes[i]),0);
+      itm.PriceBasis := TIDSConnectHelper.StrToFloat(NodeText(_Node.Children[i]),0);
       continue;
     end;
-    if SameText(_Node.ChildNodes[i].LocalName,'VAT') then
+    if SameText(_Node.Children[i].LocalName,'VAT') then
     begin
-      itm.VAT := TIDSConnectHelper.StrToFloat(NodeText(_Node.ChildNodes[i]),0);
+      itm.VAT := TIDSConnectHelper.StrToFloat(NodeText(_Node.Children[i]),0);
       continue;
     end;
-    if SameText(_Node.ChildNodes[i].LocalName,'TechnClarification') then
+    if SameText(_Node.Children[i].LocalName,'TechnClarification') then
     begin
-      itm.TechnClarification := TIDSConnectHelper.StrToTechnClarification(NodeText(_Node.ChildNodes[i]));
+      itm.TechnClarification := TIDSConnectHelper.StrToTechnClarification(NodeText(_Node.Children[i]));
       continue;
     end;
-    if SameText(_Node.ChildNodes[i].LocalName,'Hinweis') then
+    if SameText(_Node.Children[i].LocalName,'Hinweis') then
     begin
-      itm.Hinweis := NodeText(_Node.ChildNodes[i]);
+      itm.Hinweis := NodeText(_Node.Children[i]);
       continue;
     end;
-    if SameText(_Node.ChildNodes[i].LocalName,'Fehlercode') then
+    if SameText(_Node.Children[i].LocalName,'Fehlercode') then
     begin
-      if SameTExt(NodeText(_Node.ChildNodes[i]),'1') then
+      if SameTExt(NodeText(_Node.Children[i]),'1') then
         itm.Fehlercode := idsConnectFc_1;
       continue;
     end;
-    if SameText(_Node.ChildNodes[i].LocalName,'Fehlertext') then
+    if SameText(_Node.Children[i].LocalName,'Fehlertext') then
     begin
-      itm.Fehlertext := NodeText(_Node.ChildNodes[i]);
+      itm.Fehlertext := NodeText(_Node.Children[i]);
       continue;
     end;
-    if SameText(_Node.ChildNodes[i].LocalName,'Zuschlag') then
+    if SameText(_Node.Children[i].LocalName,'Zuschlag') then
     begin
-      itm.Zuschlag := TIDSConnectHelper.StrToFloat(NodeText(_Node.ChildNodes[i]),0);
+      itm.Zuschlag := TIDSConnectHelper.StrToFloat(NodeText(_Node.Children[i]),0);
       continue;
     end;
-    if SameText(_Node.ChildNodes[i].LocalName,'Rohstoffanteil') then
+    if SameText(_Node.Children[i].LocalName,'Rohstoffanteil') then
     begin
-      Result := idsRohstoffanteil(_Node.ChildNodes[i],itm.Rohstoffanteile);
+      Result := idsRohstoffanteil(_Node.Children[i],itm.Rohstoffanteile);
       if not Result then
       begin
-        //ProtocolErrorObj(_Node.ChildNodes[i]);
+        //ProtocolErrorObj(_Node.Children[i]);
         break;
       end else
         continue;
     end;
     //Divers wurde bisher nie eingelesen
-    if SameText(_Node.ChildNodes[i].LocalName,'Divers') then
+    if SameText(_Node.Children[i].LocalName,'Divers') then
     begin
-      itm.Divers := SameText(NodeText(_Node.ChildNodes[i]),'true') or (NodeText(_Node.ChildNodes[i]) = '1');
+      itm.Divers := SameText(NodeText(_Node.Children[i]),'true') or (NodeText(_Node.Children[i]) = '1');
       continue;
     end;
     //ab IDS 2.5.1
-    if SameText(_Node.ChildNodes[i].LocalName,'SumMaterialSurcharges') then
+    if SameText(_Node.Children[i].LocalName,'SumMaterialSurcharges') then
     begin
-      itm.SumMaterialSurcharges := TIDSConnectHelper.StrToFloat(NodeText(_Node.ChildNodes[i]),0);
+      itm.SumMaterialSurcharges := TIDSConnectHelper.StrToFloat(NodeText(_Node.Children[i]),0);
       continue;
     end;
-    if SameText(_Node.ChildNodes[i].LocalName,'DiscountableAmount') then
+    if SameText(_Node.Children[i].LocalName,'DiscountableAmount') then
     begin
-      itm.DiscountableAmount := TIDSConnectHelper.StrToFloat(NodeText(_Node.ChildNodes[i]),0);
+      itm.DiscountableAmount := TIDSConnectHelper.StrToFloat(NodeText(_Node.Children[i]),0);
       continue;
     end;
-    if SameText(_Node.ChildNodes[i].LocalName,'Referenz') then
+    if SameText(_Node.Children[i].LocalName,'Referenz') then
     begin
-      Result := idsReferenz(_Node.ChildNodes[i],itm.Referenzen.AddItem);
+      Result := idsReferenz(_Node.Children[i],itm.Referenzen.AddItem);
       if not Result then
         break
       else
         continue;
     end;
 
-    //ProtocolUnknownObj(_Node.ChildNodes[i]);
+    //ProtocolUnknownObj(_Node.Children[i]);
   end;
 end;
 
-function TIDSConnect_WarenkorbHelper.idsRefItems(_Node: IXMLNode;
+function TIDSConnect_WarenkorbHelper.idsRefItems(_Node: TLandrixXmlNode;
   _Obj: TIDSConnect_OrderItem): Boolean;
 var
   i : Integer;
 begin
   Result := true;
-  for i := 0 to _Node.ChildNodes.Count -1 do
+  for i := 0 to _Node.ChildCount -1 do
   begin
-    if UnusedObj(_Node.ChildNodes[i]) then continue;
+    if UnusedObj(_Node.Children[i]) then continue;
 
-    if SameText(_Node.ChildNodes[i].LocalName,'Customer') then
+    if SameText(_Node.Children[i].LocalName,'Customer') then
     begin
-      _Obj.RefItems_Customer := NodeText(_Node.ChildNodes[i]);
+      _Obj.RefItems_Customer := NodeText(_Node.Children[i]);
       continue;
     end;
-    if SameText(_Node.ChildNodes[i].LocalName,'CustomerSubNo') then
+    if SameText(_Node.Children[i].LocalName,'CustomerSubNo') then
     begin
-      _Obj.RefItems_CustomerSubNo := NodeText(_Node.ChildNodes[i]);
+      _Obj.RefItems_CustomerSubNo := NodeText(_Node.Children[i]);
       continue;
     end;
-    if SameText(_Node.ChildNodes[i].LocalName,'Supplier') then
+    if SameText(_Node.Children[i].LocalName,'Supplier') then
     begin
-      _Obj.RefItems_Supplier := NodeText(_Node.ChildNodes[i]);
+      _Obj.RefItems_Supplier := NodeText(_Node.Children[i]);
       continue;
     end;
-    if SameText(_Node.ChildNodes[i].LocalName,'SupplierSubNo') then
+    if SameText(_Node.Children[i].LocalName,'SupplierSubNo') then
     begin
-      _Obj.RefItems_SupplierSubNo := NodeText(_Node.ChildNodes[i]);
+      _Obj.RefItems_SupplierSubNo := NodeText(_Node.Children[i]);
       continue;
     end;
 
-    //ProtocolUnknownObj(_Node.ChildNodes[i]);
+    //ProtocolUnknownObj(_Node.Children[i]);
   end;
 end;
 
-function TIDSConnect_WarenkorbHelper.idsRohstoffanteil(_Node: IXMLNode;
+function TIDSConnect_WarenkorbHelper.idsRohstoffanteil(_Node: TLandrixXmlNode;
   _Obj: TIDSConnect_RohstoffanteilList): Boolean;
 var
   i : Integer;
@@ -1315,148 +1307,148 @@ begin
   Result := true;
   itm := _Obj.AddItem;
 
-  for i := 0 to _Node.ChildNodes.Count -1 do
+  for i := 0 to _Node.ChildCount -1 do
   begin
-    if UnusedObj(_Node.ChildNodes[i]) then continue;
+    if UnusedObj(_Node.Children[i]) then continue;
 
-    if SameText(_Node.ChildNodes[i].LocalName,'Rohstoff') then
+    if SameText(_Node.Children[i].LocalName,'Rohstoff') then
     begin
-      itm.Rohstoff := TIDSConnectHelper.RohstoffStrToRohstoff(NodeText(_Node.ChildNodes[i]));
+      itm.Rohstoff := TIDSConnectHelper.RohstoffStrToRohstoff(NodeText(_Node.Children[i]));
       continue;
     end;
-    if SameText(_Node.ChildNodes[i].LocalName,'Gewichtsanteilswert') then
+    if SameText(_Node.Children[i].LocalName,'Gewichtsanteilswert') then
     begin
-      itm.Gewichtsanteilswert := TIDSConnectHelper.StrToFloat(NodeText(_Node.ChildNodes[i]),0);
+      itm.Gewichtsanteilswert := TIDSConnectHelper.StrToFloat(NodeText(_Node.Children[i]),0);
       continue;
     end;
-    if SameText(_Node.ChildNodes[i].LocalName,'Gewichtsanteilseinheit') then
+    if SameText(_Node.Children[i].LocalName,'Gewichtsanteilseinheit') then
     begin
-      itm.Gewichtsanteilseinheit := TIDSConnectHelper.QuStrToQu(NodeText(_Node.ChildNodes[i]));
+      itm.Gewichtsanteilseinheit := TIDSConnectHelper.QuStrToQu(NodeText(_Node.Children[i]));
       continue;
     end;
-    if SameText(_Node.ChildNodes[i].LocalName,'Basiswert') then
+    if SameText(_Node.Children[i].LocalName,'Basiswert') then
     begin
-      itm.Basiswert := TIDSConnectHelper.StrToFloat(NodeText(_Node.ChildNodes[i]),0);
+      itm.Basiswert := TIDSConnectHelper.StrToFloat(NodeText(_Node.Children[i]),0);
       continue;
     end;
-    if SameText(_Node.ChildNodes[i].LocalName,'Basiseinheit') then
+    if SameText(_Node.Children[i].LocalName,'Basiseinheit') then
     begin
-      itm.Basiseinheit := TIDSConnectHelper.QuStrToQu(NodeText(_Node.ChildNodes[i]));
+      itm.Basiseinheit := TIDSConnectHelper.QuStrToQu(NodeText(_Node.Children[i]));
       continue;
     end;
-    if SameText(_Node.ChildNodes[i].LocalName,'Basisnotierung') then
+    if SameText(_Node.Children[i].LocalName,'Basisnotierung') then
     begin
-      itm.Basisnotierung := TIDSConnectHelper.StrToFloat(NodeText(_Node.ChildNodes[i]),0);
+      itm.Basisnotierung := TIDSConnectHelper.StrToFloat(NodeText(_Node.Children[i]),0);
       continue;
     end;
-    if SameText(_Node.ChildNodes[i].LocalName,'NotierungAktuell') then
+    if SameText(_Node.Children[i].LocalName,'NotierungAktuell') then
     begin
-      itm.NotierungAktuell := TIDSConnectHelper.StrToFloat(NodeText(_Node.ChildNodes[i]),0);
+      itm.NotierungAktuell := TIDSConnectHelper.StrToFloat(NodeText(_Node.Children[i]),0);
       continue;
     end;
 
-    //ProtocolUnknownObj(_Node.ChildNodes[i]);
+    //ProtocolUnknownObj(_Node.Children[i]);
   end;
 end;
 
-function TIDSConnect_WarenkorbHelper.idsSupplierInfo(_Node: IXMLNode;
+function TIDSConnect_WarenkorbHelper.idsSupplierInfo(_Node: TLandrixXmlNode;
   _Obj: TIDSConnect_SupplierInfo): Boolean;
 var
   i : Integer;
 begin
   Result := true;
-  for i := 0 to _Node.ChildNodes.Count -1 do
+  for i := 0 to _Node.ChildCount -1 do
   begin
-    if UnusedObj(_Node.ChildNodes[i]) then continue;
+    if UnusedObj(_Node.Children[i]) then continue;
 
-    if SameText(_Node.ChildNodes[i].LocalName,'IDNo') then
+    if SameText(_Node.Children[i].LocalName,'IDNo') then
     begin
-      _Obj.IDNo := NodeText(_Node.ChildNodes[i]);
+      _Obj.IDNo := NodeText(_Node.Children[i]);
       continue;
     end;
-    if SameText(_Node.ChildNodes[i].LocalName,'Address') then
+    if SameText(_Node.Children[i].LocalName,'Address') then
     begin
-      Result := idsAddress(_Node.ChildNodes[i],_Obj.Address);
+      Result := idsAddress(_Node.Children[i],_Obj.Address);
       if not Result then
       begin
-        //ProtocolErrorObj(_Node.ChildNodes[i]);
+        //ProtocolErrorObj(_Node.Children[i]);
         break;
       end else
         continue;
     end;
 
-    //ProtocolUnknownObj(_Node.ChildNodes[i]);
+    //ProtocolUnknownObj(_Node.Children[i]);
   end;
 end;
 
-function TIDSConnect_WarenkorbHelper.idsWarenkorb(_Node: IXMLNode): Boolean;
+function TIDSConnect_WarenkorbHelper.idsWarenkorb(_Node: TLandrixXmlNode): Boolean;
 var
   i : Integer;
 begin
   Result := false;
 
-  for i := 0 to _Node.ChildNodes.Count -1 do
+  for i := 0 to _Node.ChildCount -1 do
   begin
-    if UnusedObj(_Node.ChildNodes[i]) then continue;
-    if SameText(_Node.ChildNodes[i].LocalName,'WarenkorbInfo') then
+    if UnusedObj(_Node.Children[i]) then continue;
+    if SameText(_Node.Children[i].LocalName,'WarenkorbInfo') then
     begin
-      Result := idsWarenkorbInfo(_Node.ChildNodes[i],WarenkorbInfo);
+      Result := idsWarenkorbInfo(_Node.Children[i],WarenkorbInfo);
       if not Result then
       begin
-        //ProtocolErrorObj(_Node.ChildNodes[i]);
+        //ProtocolErrorObj(_Node.Children[i]);
         break;
       end else
         continue;
      end;
 
-    if SameText(_Node.ChildNodes[i].LocalName,'Order') then
+    if SameText(_Node.Children[i].LocalName,'Order') then
     begin
-      Result := idsOrder(_Node.ChildNodes[i],Order);
+      Result := idsOrder(_Node.Children[i],Order);
       if not Result then
       begin
-        //ProtocolErrorObj(_Node.ChildNodes[i]);
+        //ProtocolErrorObj(_Node.Children[i]);
         break;
       end else
         continue;
      end;
 
-     //ProtocolUnknownObj(_Node.ChildNodes[i]);
+     //ProtocolUnknownObj(_Node.Children[i]);
   end;
 end;
 
-function TIDSConnect_WarenkorbHelper.idsWarenkorbInfo(_Node: IXMLNode;
+function TIDSConnect_WarenkorbHelper.idsWarenkorbInfo(_Node: TLandrixXmlNode;
   _obj: TIDSConnect_WarenkorbInfo): Boolean;
 var
   i : Integer;
 begin
   Result := true;
-  for i := 0 to _Node.ChildNodes.Count -1 do
+  for i := 0 to _Node.ChildCount -1 do
   begin
-    if UnusedObj(_Node.ChildNodes[i]) then continue;
-    if SameText(_Node.ChildNodes[i].LocalName,'Date') then
+    if UnusedObj(_Node.Children[i]) then continue;
+    if SameText(_Node.Children[i].LocalName,'Date') then
     begin
-      _Obj.Date := TIDSConnectHelper.DateStrToDate(NodeText(_Node.ChildNodes[i]));
+      _Obj.Date := TIDSConnectHelper.DateStrToDate(NodeText(_Node.Children[i]));
       continue;
     end;
-    if SameText(_Node.ChildNodes[i].LocalName,'Time') then
+    if SameText(_Node.Children[i].LocalName,'Time') then
     begin
-      _Obj.Time := TIDSConnectHelper.TimeStrToTime(NodeText(_Node.ChildNodes[i]));
+      _Obj.Time := TIDSConnectHelper.TimeStrToTime(NodeText(_Node.Children[i]));
       continue;
     end;
-    if SameText(_Node.ChildNodes[i].LocalName,'RueckgabeKZ') then
+    if SameText(_Node.Children[i].LocalName,'RueckgabeKZ') then
     begin
-      if (Pos('BESTELLUNG',UpperCase(NodeText(_Node.ChildNodes[i])))>0) then
+      if (Pos('BESTELLUNG',UpperCase(NodeText(_Node.Children[i])))>0) then
         _Obj.RueckgabeKZ := idsConnectRKZ_WarenkorbrueckgabeMitBestellung
       else
         _Obj.RueckgabeKZ := idsConnectRKZ_Warenkorbrueckgabe;
       continue;
     end;
-    if SameText(_Node.ChildNodes[i].LocalName,'Version') then
+    if SameText(_Node.Children[i].LocalName,'Version') then
     begin
-      _Obj.Version := TIDSConnectHelper.VersionFromStr(NodeText(_Node.ChildNodes[i]));
+      _Obj.Version := TIDSConnectHelper.VersionFromStr(NodeText(_Node.Children[i]));
       continue;
     end;
-    //ProtocolUnknownObj(_Node.ChildNodes[i]);
+    //ProtocolUnknownObj(_Node.Children[i]);
   end;
 end;
 
@@ -1479,15 +1471,15 @@ end;
 
 function TIDSConnect_WarenkorbHelper.LoadFromStream(_Stream: TStream): Boolean;
 var
-  lBuffer : IXMLDocument;
+  lBuffer : TLandrixXmlDocument;
   lBytes : TBytes;
   lXml : String;
 begin
   Result := false;
   Clear;
 
-  lBuffer := TXMLDocument.Create(nil);
-
+  lBuffer := TLandrixXmlDocument.Create;
+  try
   try
     _Stream.Position := 0;
     SetLength(lBytes,_Stream.Size);
@@ -1498,13 +1490,13 @@ begin
     lXml := DecodeXmlBytes(lBytes);
     if ContainsText(lXml,'<head/>') then
       lXml := ReplaceText(lXml,'<head/>','');
-    lBuffer.LoadFromXML(lXml);
+    lBuffer.LoadFromString(lXml);
 
-    if lBuffer.DocumentElement = nil then
+    if lBuffer.Root = nil then
       exit;
 
-    if SameText(lBuffer.DocumentElement.LocalName,'Warenkorb') then
-      Result := idsWarenkorb(lBuffer.DocumentElement)
+    if SameText(lBuffer.Root.LocalName,'Warenkorb') then
+      Result := idsWarenkorb(lBuffer.Root)
   except
     on E:Exception do
     begin
@@ -1512,6 +1504,9 @@ begin
       Result := false;
       TIDSConnect.ReportError('Der Warenkorb konnte nicht gelesen werden: '+E.Message,E);
     end;
+  end;
+  finally
+    lBuffer.Free;
   end;
 end;
 
@@ -1805,13 +1800,11 @@ begin
   Result := true;
 end;
 
-function TIDSConnect_WarenkorbHelper.UnusedObj(_Node: IXMLNode): Boolean;
+function TIDSConnect_WarenkorbHelper.UnusedObj(_Node: TLandrixXmlNode): Boolean;
 begin
-  //Neben Textknoten muessen auch Kommentare und CDATA-Abschnitte uebersprungen
-  //werden, sonst laufen sie in die Elementnamen-Vergleiche
-  Result := SameText(_Node.NodeName,'#text') or
-            SameText(_Node.NodeName,'#comment') or
-            SameText(_Node.NodeName,'#cdata-section');
+  //Nur Elemente werden ausgewertet; Text, Kommentare, CDATA-Abschnitte und
+  //Verarbeitungsanweisungen zwischen den Elementen werden uebersprungen
+  Result := _Node.NodeType <> xntElement;
 end;
 
 { TIDSConnect }
@@ -1849,6 +1842,7 @@ var
   vcHelper : TIDSConnect.TValidateCertificatHelper;
   data : TMultipartFormData;
   res : IHTTPResponse;
+  lBytes : TBytes;
 begin
   Result := false;
   _Response := '';
@@ -1864,6 +1858,9 @@ begin
       http.OnValidateServerCertificate := vcHelper.DoValidateCertificateEvent;
     http.ConnectionTimeout := 15000;
     http.ResponseTimeout := 30000;
+    //Komprimierte Antworten entpackt dann das Betriebssystem; ContentStream
+    //enthaelt so immer die unkomprimierten Bytes
+    http.AutomaticDecompression := [THTTPCompressionMethod.Any];
 
     data.AddField('action',_Action);
     data.AddField('version',TIDSConnectHelper.VersionToStr(_Version));
@@ -1874,7 +1871,19 @@ begin
         ReportError(Format('Die Abfrage "%s" wurde mit HTTP %d beantwortet.',[_Action,res.StatusCode]),nil);
         exit;
       end;
-      _Response := res.ContentAsString;
+      //Nennt der Server einen Zeichensatz, gilt der (z. B. UTF-16 ohne BOM).
+      //Ohne Angabe wie bei der Hook-Rueckgabe ueber Deklaration bzw. BOM
+      //dekodieren - ContentAsString las Latin-1 ohne charset-Header falsch.
+      if res.ContentCharSet <> '' then
+        _Response := XmlDeclToUtf8(res.ContentAsString)
+      else
+      begin
+        res.ContentStream.Position := 0;
+        SetLength(lBytes,res.ContentStream.Size);
+        if Length(lBytes) > 0 then
+          res.ContentStream.ReadBuffer(lBytes[0],Length(lBytes));
+        _Response := DecodeXmlBytes(lBytes);
+      end;
       Result := _Response <> '';
     except
       on E:Exception do
@@ -1888,21 +1897,22 @@ begin
 end;
 
 class function TIDSConnect.ParseResponse(const _Response, _RootName: String;
-  out _Doc: IXMLDocument): IXMLNode;
+  out _Doc: TLandrixXmlDocument): TLandrixXmlNode;
 begin
   Result := nil;
-  _Doc := TXMLDocument.Create(nil);
+  //Der Aufrufer gibt _Doc frei, auch wenn das Ergebnis nil ist
+  _Doc := TLandrixXmlDocument.Create;
   try
-    _Doc.LoadFromXML(_Response);
-    if _Doc.DocumentElement = nil then
+    _Doc.LoadFromString(_Response);
+    if _Doc.Root = nil then
       exit;
-    if not SameText(_Doc.DocumentElement.LocalName,_RootName) then
+    if not SameText(_Doc.Root.LocalName,_RootName) then
     begin
       ReportError(Format('Unerwartete Antwort: <%s> statt <%s>.',
-                  [_Doc.DocumentElement.NodeName,_RootName]),nil);
+                  [_Doc.Root.Name,_RootName]),nil);
       exit;
     end;
-    Result := _Doc.DocumentElement;
+    Result := _Doc.Root;
   except
     on E:Exception do
       ReportError('Die Antwort konnte nicht gelesen werden: '+E.Message,E);
@@ -1913,20 +1923,19 @@ class function TIDSConnect.IDSConnectLI(const _ServiceURL: String;
   out _LoginInfo: TIDSConnect_LoginInfo; _Version : TIDSConnect_Version): Boolean;
 var
   lResponse : String;
-  lDoc : IXMLDocument;
-  lRoot,lNode : IXMLNode;
+  lDoc : TLandrixXmlDocument;
+  lRoot,lNode : TLandrixXmlNode;
 
   function NodeIsTrue(const _Name : String; _Default : Boolean) : Boolean;
   var
     i : Integer;
   begin
     Result := _Default;
-    //FindNode vergleicht den vollen Namen samt Praefix - deshalb selbst
-    //ueber den lokalen Namen suchen
-    for i := 0 to lRoot.ChildNodes.Count-1 do
+    //Ueber den lokalen Namen suchen, damit ein Namensraum-Praefix nicht stoert
+    for i := 0 to lRoot.ChildCount-1 do
     begin
-      lNode := lRoot.ChildNodes[i];
-      if (lNode.NodeType = ntElement) and SameText(lNode.LocalName,_Name) then
+      lNode := lRoot.Children[i];
+      if (lNode.NodeType = xntElement) and SameText(lNode.LocalName,_Name) then
       begin
         Result := SameText(Trim(NodeText(lNode)),'true') or (Trim(NodeText(lNode)) = '1');
         exit;
@@ -1940,23 +1949,28 @@ begin
   if not PostAction(_ServiceURL,'LI',lResponse,_Version) then
     exit;
 
-  lRoot := ParseResponse(lResponse,'Logininformationen',lDoc);
-  if lRoot = nil then
-    exit;
+  lDoc := nil;
+  try
+    lRoot := ParseResponse(lResponse,'Logininformationen',lDoc);
+    if lRoot = nil then
+      exit;
 
-  //Fehlt eine Angabe, bleibt es bei "erforderlich" aus Clear
-  _LoginInfo.CustomerNoRequired := NodeIsTrue('Kundennummer_erforderlich',true);
-  _LoginInfo.UsernameRequired   := NodeIsTrue('Benutzername_erforderlich',true);
-  _LoginInfo.PasswordRequired   := NodeIsTrue('Passwort_erforderlich',true);
-  Result := true;
+    //Fehlt eine Angabe, bleibt es bei "erforderlich" aus Clear
+    _LoginInfo.CustomerNoRequired := NodeIsTrue('Kundennummer_erforderlich',true);
+    _LoginInfo.UsernameRequired   := NodeIsTrue('Benutzername_erforderlich',true);
+    _LoginInfo.PasswordRequired   := NodeIsTrue('Passwort_erforderlich',true);
+    Result := true;
+  finally
+    lDoc.Free;
+  end;
 end;
 
 class function TIDSConnect.IDSConnectSV(const _ServiceURL: String;
   _Versions: TStrings; _Version : TIDSConnect_Version): Boolean;
 var
   lResponse : String;
-  lDoc : IXMLDocument;
-  lRoot : IXMLNode;
+  lDoc : TLandrixXmlDocument;
+  lRoot : TLandrixXmlNode;
   i : Integer;
 begin
   Result := false;
@@ -1966,14 +1980,20 @@ begin
   if not PostAction(_ServiceURL,'SV',lResponse,_Version) then
     exit;
 
-  lRoot := ParseResponse(lResponse,'Schnittstellenversionen',lDoc);
-  if lRoot = nil then
-    exit;
+  lDoc := nil;
+  try
+    lRoot := ParseResponse(lResponse,'Schnittstellenversionen',lDoc);
+    if lRoot = nil then
+      exit;
 
-  for i := 0 to lRoot.ChildNodes.Count-1 do
-    if SameText(lRoot.ChildNodes[i].LocalName,'Version') then
-      _Versions.Add(Trim(NodeText(lRoot.ChildNodes[i])));
-  Result := true;
+    for i := 0 to lRoot.ChildCount-1 do
+      if (lRoot.Children[i].NodeType = xntElement) and
+         SameText(lRoot.Children[i].LocalName,'Version') then
+        _Versions.Add(Trim(NodeText(lRoot.Children[i])));
+    Result := true;
+  finally
+    lDoc.Free;
+  end;
 end;
 
 class function TIDSConnect.IDSConnectSVBestVersion(

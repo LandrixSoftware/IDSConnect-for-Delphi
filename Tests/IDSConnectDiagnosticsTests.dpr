@@ -120,6 +120,10 @@ begin
       Check(TIDSConnect.IDSConnectLI(BaseUrl+'/post25',Login,idsConnectVersion_2_5),
         'LI ignores selected version');
       Check(TIDSConnect.IDSConnectSV(BaseUrl+'/post251',Versions),'Default SV version changed');
+      Check(TIDSConnect.IDSConnectSV(BaseUrl+'/post-utf16',Versions) and
+            (Versions.IndexOf('2.5') >= 0),'SV ignores HTTP charset (UTF-16 without BOM)');
+      Check(TIDSConnect.IDSConnectSV(BaseUrl+'/post-gzip',Versions) and
+            (Versions.IndexOf('2.5') >= 0),'SV fails on gzip response');
     finally
       Versions.Free;
     end;
