@@ -178,24 +178,23 @@ und schließt sich; der Warenkorb wird danach abgeholt. Beim Standardbrowser
 
 ### Profil- und Cache-Ordner
 
-`TEdgeBrowser` braucht einen beschreibbaren Ordner für Profil, Cookies und
-Cache. Bleibt er leer, legt WebView2 ihn **neben der ausführbaren Datei** an —
-unter `C:\Program Files` schlägt die Initialisierung damit fehl. Deshalb wird,
-wenn beim `ShowDialog` kein Pfad übergeben wird, automatisch
+Wenn beim `ShowDialog` kein Pfad übergeben wird, verwendet `TEdgeBrowser`
+für Profil, Cookies und Cache den Unterordner **WebView2 neben der EXE**:
 
 ```
-%LOCALAPPDATA%\<AnwendungsName>.IDSConnect.WebView2
+<EXE-Verzeichnis>\WebView2
 ```
 
-verwendet und bei Bedarf angelegt. Der Ordner ist bewusst dauerhaft und kein
+Der Ordner wird bei Bedarf angelegt und muss beschreibbar sein. Er ist dauerhaft und kein
 Temp-Verzeichnis: WebView2 legt dort die Anmeldesitzung ab, sonst müsste sich
 der Anwender bei jedem Aufruf neu am Shop anmelden. Ein eigener Pfad lässt sich
 weiterhin übergeben.
 
 ## Beispielprojekt
 
-Das Projekt unter [Samples](Samples/) erwartet neben der Projektdatei eine
-`configuration.ini`:
+Das Projekt unter [Samples](Samples/) liest eine `config.ini` neben der EXE
+oder im Projektverzeichnis. Der bisherige Name `configuration.ini` wird
+weiterhin unterstützt. Beispiel:
 
 ```ini
 [Settings]
@@ -206,15 +205,72 @@ Username=...
 Password=...
 Customernumber=...
 IDSConnectUrl=https://...
+Version=2.5.1
 DemoArticle=...        ;optional, füllt das Feld Artikelnummer
 MultipleResult=1       ;optional, Shop beherrscht die Mehrfachrückgabe
 ```
 
 Der Schalter „Shop-Infos (SV / LI)" fragt beim ausgewählten Anbieter die
 unterstützten Schnittstellenversionen und die benötigten Anmeldedaten ab.
+Die Abfrage ändert die konfigurierte Version nicht.
+
+`Version` wird **je Anbieter** eingetragen: erlaubt sind `2.5` und `2.5.1`.
+Ohne Schlüssel gilt weiterhin `2.5.1`; ein leerer oder ungültiger Wert wird
+als Konfigurationsfehler angezeigt und verhindert den Aufruf. Die Einstellung
+gilt für WKE, WKS, ADL, AS, SV und LI. Bei WKS stimmen Formularversion und
+Warenkorb-XML überein. Bei AS werden die Parameter `multipleResult` und
+`hookURLTimeout` nur für 2.5.1 übertragen; das lokale Zeitlimit bleibt aktiv.
+
+In eigenen Anwendungen lässt sich die Version als letzter optionaler Parameter
+an `IDSConnectWKE`, `IDSConnectADT`, `IDSConnectAS`, `IDSConnectSV`,
+`IDSConnectLI` und `IDSConnectSVBestVersion` übergeben. Bestehende Aufrufe
+verwenden weiterhin 2.5.1. Für WKS bestimmt `WarenkorbInfo.Version` sowohl
+die XML- als auch die Formularversion.
 
 Die Datei enthält Zugangsdaten und ist deshalb von der Versionsverwaltung
 ausgenommen.
+
+### Einen Shop mit „Warenkorb empfangen“ prüfen
+
+Die Konfiguration direkt neben der EXE hat Vorrang vor dem Projektverzeichnis.
+Je Verzeichnis wird zuerst `config.ini`, dann `configuration.ini` gesucht.
+Anbieter auswählen und
+„Warenkorb empfangen“ starten. Im geöffneten Shop den gewünschten Warenkorb
+an die Handwerkssoftware zurückgeben.
+
+Für diesen WKE-Aufruf zeigt das Beispiel drei Ansichten:
+
+* **Aufruf / Protokoll:** vorbereitete POST-Parameter mit maskiertem Passwort,
+  Hook-URL inklusive Sitzungskennung, HTTP-Status und Größe der Hook-Antworten,
+  Fehler sowie Gesamtdauer einschließlich der Bedienung im Shop.
+* **XML / Rückgabe:** XML wird für die Anzeige mit Zeilenumbrüchen und zwei
+  Leerzeichen je Ebene eingerückt (Pretty Print). Lässt sich die Antwort
+  nicht formatieren, bleibt der ursprüngliche Text sichtbar, auch bei
+  ungültigem XML oder HTTP-Fehlern. „Rückgabe speichern“ speichert die
+  ursprünglichen Bytes ohne Umkodierung. Leere Antworten und HTTP 404
+  überschreiben die letzte angezeigte Nutzlast nicht.
+* **Eingelesener Warenkorb:** Version, Kundennummer, Kommission und Positionen
+  mit Artikelnummer, Texten, Menge, Einheit, Nettopreis, Preisbasis, MwSt.,
+  Hinweisen und Fehlern des Shops.
+
+Die HTTP-Statuswerte stammen vom **Abruf der Hook-URL**. Der eigentliche
+Shop-Aufruf läuft im Browser; dessen HTTP-Antworten werden hier nicht
+mitgeschnitten. „Eingelesen“ bestätigt die Verarbeitung durch den Parser,
+keine Schema-Konformität oder fachliche Vollständigkeit. Fehlende Zahlenfelder
+können im Datenmodell als 0 erscheinen; zum Vergleich dient die rohe Rückgabe.
+
+Für eigene Diagnoseoberflächen stehen optional `IDSCONNECT_ONREQUEST`
+(vorbereiteter WKE-Aufruf) und `IDSCONNECT_ONRESPONSE` (HTTP-Status und rohe
+Bytes jedes Hook-Abrufs) bereit. `TryFetchResult(URL,Warenkorb,Fehlertext)`
+ermöglicht einen einzelnen Abruf ohne Browser oder Wartedialog. Dazu muss die
+vollständige Hook-URL einschließlich `sid` übergeben werden. Der Abruf kann
+die serverseitige Rückgabe verbrauchen; beim mitgelieferten PHP-Skript wird
+sie anschließend gelöscht.
+
+Lokale Regressionstests mit einem simulierten HTTP-Endpunkt lassen sich mit
+`python Tests/run_diagnostics.py` starten (Python 3 und `dcc32` im PATH).
+Sie prüfen Rückgaben, Fehlerfälle, unveränderte Bytes und die Passwortmaskierung
+ohne einen echten Shop aufzurufen.
 
 # Lieferanten mit IDS-Connect-Unterstützung
 

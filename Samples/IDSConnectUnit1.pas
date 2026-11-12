@@ -6,7 +6,7 @@ uses
   Winapi.Windows, Winapi.Messages, System.SysUtils, System.Variants,
   System.Classes, Vcl.Graphics,Vcl.Controls, Vcl.Forms, System.UITypes,
   Vcl.Dialogs, Vcl.StdCtrls, System.Inifiles, System.StrUtils, System.IOUtils,
-  System.DateUtils, System.Math, Vcl.ComCtrls
+  System.DateUtils, System.Math, Vcl.ComCtrls, Xml.XMLDoc
   ,intf.IDSConnectTypes,intf.IDSConnect,intf.IDSConnectDlgWebBrowser, Vcl.ExtCtrls;
 
 type
@@ -162,7 +162,7 @@ begin
   Memo1.Align := alClient;
   Memo1.ReadOnly := true;
   Memo1.WordWrap := false;
-  FRawMemo := AddMemo('XML / rohe Rückgabe');
+  FRawMemo := AddMemo('XML / Rückgabe');
   FCartMemo := AddMemo('Eingelesener Warenkorb');
   FPages.ActivePageIndex := 0;
 end;
@@ -212,7 +212,14 @@ begin
         end;
       end;
     end;
-    FRawMemo.Text := lText;
+    //Nur die Anzeige formatieren. FResponseBody bleibt fuer den Export
+    //unveraendert; auch ungueltige XML-/HTML-Antworten bleiben sichtbar.
+    try
+      FRawMemo.Text := FormatXMLData(lText,2);
+    except
+      on E: Exception do
+        FRawMemo.Text := lText;
+    end;
   finally
     lEncoding.Free;
   end;

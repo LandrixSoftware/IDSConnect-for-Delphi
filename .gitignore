@@ -67,6 +67,7 @@ GRTAGS
 *.projdata
 *.tvsconfig
 *.dsk
+*.cbk
 
 # Delphi history and backups
 __history/
@@ -78,6 +79,7 @@ __recovery/
 
 Deprecated
 # Zugangsdaten und lokale Testdaten nicht einchecken
+WebView2/
 Samples/configuration.ini
 configuration.ini
 config.ini
