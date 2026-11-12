@@ -22,6 +22,26 @@ RESPONSES = {
     '/empty': (200, b''),
     '/latin1': (200, ('<?xml version="1.0" encoding="ISO-8859-1"?>'
                      + CART.replace('A&amp;B', 'Caf\u00e9') + '<!--\u00e9-->').encode('latin1')),
+    # "1252" in the content must not switch UTF-8 to a single-byte encoding
+    '/utf8-1252': (200, ('<?xml version="1.0" encoding="UTF-8"?>'
+                         + CART.replace('A&amp;B', 'B-1252 M\u00fcller')).encode('utf-8')),
+    # Latin-1 declared, but UTF-8 bytes sent
+    '/latin1-decl-utf8': (200, ('<?xml version="1.0" encoding="ISO-8859-1"?>'
+                                + CART.replace('A&amp;B', 'Gr\u00fcn')).encode('utf-8')),
+    # Tab after "=" in the declaration, Windows-1250 bytes
+    '/decl-tab': (200, ('<?xml version="1.0" encoding=\t"windows-1250"?>'
+                        + CART.replace('A&amp;B', '\u0141')).encode('cp1250')),
+    # No declaration, Windows-1252 bytes
+    '/cp1252-nodecl': (200, CART.replace('A&amp;B', 'Ma\u00dfband \u20ac').encode('cp1252')),
+    # Namespace prefix on every element
+    '/ns': (200, ('<ids:Warenkorb xmlns:ids="urn:ids"><ids:WarenkorbInfo>'
+                  '<ids:Version>2.5.1</ids:Version></ids:WarenkorbInfo><ids:Order>'
+                  '<ids:OrderInfo><ids:Cur>CHF</ids:Cur></ids:OrderInfo>'
+                  '<ids:OrderItem><ids:ArtNo>NS1</ids:ArtNo><ids:Qty>3</ids:Qty>'
+                  '<ids:QU>PCE</ids:QU></ids:OrderItem></ids:Order></ids:Warenkorb>').encode()),
+    # Text, CDATA and a comment in one element
+    '/mixed-text': (200, CART.replace('<ArtNo>A&amp;B</ArtNo>',
+                    '<ArtNo>ab<![CDATA[c&d]]><!--x-->e</ArtNo>').encode()),
 }
 
 # Hook server with a queue: every GET consumes the oldest return.

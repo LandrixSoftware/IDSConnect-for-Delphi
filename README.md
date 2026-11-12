@@ -279,6 +279,25 @@ Für diesen WKE-Aufruf zeigt das Beispiel drei Ansichten:
   mit Artikelnummer, Texten, Menge, Einheit, Nettopreis, Preisbasis, MwSt.,
   Hinweisen und Fehlern des Shops.
 
+### Einlesen der Rückgabe
+
+* **Kodierung:** Maßgeblich ist ein BOM, sonst die Angabe `encoding` in der
+  XML-Deklaration (ISO-8859-1/-15/-2, Windows-1250/1252 über feste
+  Codepages, unabhängig von der Systemcodepage). Ohne Deklaration gilt
+  UTF-8; ist der Inhalt kein gültiges UTF-8, wird Windows-1252 angenommen.
+  Deklariert ein Shop eine Byte-Kodierung, sendet aber gültiges UTF-8 mit
+  Umlauten, wird UTF-8 gelesen.
+* **Namensräume:** Elemente werden über ihren lokalen Namen erkannt;
+  `<ids:Warenkorb xmlns:ids="…">` wird wie `<Warenkorb>` gelesen.
+* **Gemischter Inhalt:** Text und CDATA-Abschnitte eines Elements werden
+  zusammengesetzt, Kommentare übersprungen.
+* Scheitert das Einlesen trotzdem, ist die Rückgabe beim mitgelieferten
+  PHP-Skript bereits verbraucht. Die rohen Bytes liefert
+  `IDSCONNECT_ONRESPONSE` — wer sie dort sichert, verliert nichts.
+
+Die Browserformulare (ADL, AS, WKE, WKS) senden wie von der Spezifikation
+verlangt `multipart/form-data`, ebenso die direkten Abfragen LI und SV.
+
 Die HTTP-Statuswerte stammen vom **Abruf der Hook-URL**. Der eigentliche
 Shop-Aufruf läuft im Browser; dessen HTTP-Antworten werden hier nicht
 mitgeschnitten. „Eingelesen“ bestätigt die Verarbeitung durch den Parser,
@@ -297,7 +316,8 @@ Lokale Regressionstests mit einem simulierten HTTP-Endpunkt lassen sich mit
 `python Tests/run_diagnostics.py` starten (Python 3 und `dcc32` im PATH).
 Sie prüfen Rückgaben, Fehlerfälle, unveränderte Bytes und die Passwortmaskierung
 ohne einen echten Shop aufzurufen, dazu das Sammeln mehrerer Rückgaben samt
-Kopfdaten und den Schutz vor doppelt gelieferten Rückgaben.
+Kopfdaten und den Schutz vor doppelt gelieferten Rückgaben sowie die
+Kodierungserkennung, Namensraum-Präfixe und gemischten Inhalt.
 `python Tests/test_hook_php.py` (PHP im PATH) prüft die Warteschlange von
 `idsconnect.php` auf dem eingebauten PHP-Server.
 

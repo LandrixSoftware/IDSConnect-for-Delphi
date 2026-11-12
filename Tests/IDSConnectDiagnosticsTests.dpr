@@ -65,6 +65,27 @@ begin
     Check(TIDSConnect.TryFetchResult(BaseUrl+'/latin1',Cart,Error),'Latin-1 cart rejected');
     Check(Pos('encoding="ISO-8859-1"',Body) > 0,'Encoding declaration changed');
     Check(Bytes[Length(Bytes)-4] = 233,'Raw Latin-1 byte changed');
+    Check(Cart.Order.OrderItems[0].ArtNo = 'Caf'#$E9,'Latin-1 text decoded wrong: '+
+          Cart.Order.OrderItems[0].ArtNo);
+
+    Check(TIDSConnect.TryFetchResult(BaseUrl+'/utf8-1252',Cart,Error),'UTF-8 with 1252 rejected: '+Error);
+    Check(Cart.Order.OrderItems[0].ArtNo = 'B-1252 M'#$FC'ller','UTF-8 decoded as ANSI: '+
+          Cart.Order.OrderItems[0].ArtNo);
+    Check(TIDSConnect.TryFetchResult(BaseUrl+'/latin1-decl-utf8',Cart,Error),
+          'UTF-8 with Latin-1 declaration rejected: '+Error);
+    Check(Cart.Order.OrderItems[0].ArtNo = 'Gr'#$FC'n','UTF-8 bytes with Latin-1 declaration: '+
+          Cart.Order.OrderItems[0].ArtNo);
+    Check(TIDSConnect.TryFetchResult(BaseUrl+'/decl-tab',Cart,Error),'Tab in declaration rejected: '+Error);
+    Check(Cart.Order.OrderItems[0].ArtNo = #$0141,'Tab in declaration ignored: '+
+          Cart.Order.OrderItems[0].ArtNo);
+    Check(TIDSConnect.TryFetchResult(BaseUrl+'/cp1252-nodecl',Cart,Error),'CP1252 without declaration rejected: '+Error);
+    Check(Cart.Order.OrderItems[0].ArtNo = 'Ma'#$DF'band '#$20AC,'CP1252 without declaration: '+
+          Cart.Order.OrderItems[0].ArtNo);
+    Check(TIDSConnect.TryFetchResult(BaseUrl+'/ns',Cart,Error),'Namespace prefix rejected: '+Error);
+    Check((Cart.Order.OrderItems.Count = 1) and (Cart.Order.OrderItems[0].ArtNo = 'NS1') and
+          (Cart.Order.OrderInfo.Cur = 'CHF'),'Namespace prefix content lost');
+    Check(TIDSConnect.TryFetchResult(BaseUrl+'/mixed-text',Cart,Error),'Mixed content rejected: '+Error);
+    Check(Cart.Order.OrderItems[0].ArtNo = 'abc&de','Mixed content text: '+Cart.Order.OrderItems[0].ArtNo);
 
     TIDSConnect.IDSCONNECT_ONRESPONSE := nil;
     Check(TIDSConnect.TryFetchResult(BaseUrl+'/valid',Cart,Error),'Fetch without callback failed');
