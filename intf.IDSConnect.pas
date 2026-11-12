@@ -187,6 +187,11 @@ type
     class function TimeToTimeStr(const _Val : TTime) : String;
     class function VersionFromStr(const _Val: String): TIDSConnect_Version;
     class function VersionToStr(const _Val: TIDSConnect_Version): String;
+    //Version, mit der ein Warenkorb gesendet wird: 2.5 und 2.5.1 bleiben,
+    //unbekannt wird 2.5.1, aeltere Versionen (1.3 bis 2.3) werden 2.5 - die
+    //Unit erzeugt nur diese beiden Strukturen. XML-Element, Schema und das
+    //WKS-Formularfeld muessen dieselbe Version melden.
+    class function SendVersion(const _Val: TIDSConnect_Version): TIDSConnect_Version;
     class function StrToTechnClarification(const _Val: String) : TIDSConnect_TechnClarification;
     class function TechnClarificationToStr(_Val: TIDSConnect_TechnClarification) : String;
     class function StrMaxLength(const _Str: String; const _MaxLength: integer): String;
@@ -490,9 +495,45 @@ begin
 end;
 
 class function TIDSConnectHelper.XmlEscape(const _Val: String): String;
+var
+  lClean : TStringBuilder;
+  i : Integer;
+  c : Char;
 begin
+  //Zeichen, die XML 1.0 nicht erlaubt, werden entfernt: Steuerzeichen ausser
+  //Tab/LF/CR, #$FFFE/#$FFFF und einzelne Surrogate. Ein vertikaler Tab oder
+  //Seitenvorschub aus Word-/RTF-Langtexten machte das gesendete XML frueher
+  //nicht wohlgeformt, der Shop lehnte den ganzen Warenkorb ab.
+  lClean := TStringBuilder.Create(Length(_Val));
+  try
+    i := 1;
+    while i <= Length(_Val) do
+    begin
+      c := _Val[i];
+      if (c >= #$D800) and (c <= #$DBFF) then
+      begin
+        //Nur ein vollstaendiges Surrogatpaar ist ein gueltiges Zeichen
+        if (i < Length(_Val)) and (_Val[i+1] >= #$DC00) and (_Val[i+1] <= #$DFFF) then
+        begin
+          lClean.Append(c).Append(_Val[i+1]);
+          Inc(i);
+        end;
+      end else
+      if (c >= #$DC00) and (c <= #$DFFF) then
+        //einzelnes niedriges Surrogat
+      else
+      if ((c < #32) and not CharInSet(c,[#9,#10,#13])) or (c = #$FFFE) or (c = #$FFFF) then
+        //nicht erlaubt
+      else
+        lClean.Append(c);
+      Inc(i);
+    end;
+    Result := lClean.ToString;
+  finally
+    lClean.Free;
+  end;
   //Reihenfolge ist wichtig: & muss zuerst ersetzt werden
-  Result := _Val.Replace('&','&amp;',[rfReplaceAll])
+  Result := Result.Replace('&','&amp;',[rfReplaceAll])
                 .Replace('<','&lt;',[rfReplaceAll])
                 .Replace('>','&gt;',[rfReplaceAll])
                 .Replace('"','&quot;',[rfReplaceAll])
@@ -519,7 +560,12 @@ class function TIDSConnectHelper.StrMaxLength(const _Str: String;
 begin
   Result := _Str;
   if (Length(_Str)>_MaxLength) then
+  begin
     SetLength(Result,_MaxLength);
+    //Ein abgeschnittenes Surrogatpaar wuerde ein ungueltiges Zeichen ergeben
+    if (_MaxLength > 0) and (Result[_MaxLength] >= #$D800) and (Result[_MaxLength] <= #$DBFF) then
+      SetLength(Result,_MaxLength-1);
+  end;
 end;
 
 class function TIDSConnectHelper.StrToFloat(_Val: String; _Default: double): double;
@@ -595,21 +641,38 @@ end;
 
 class function TIDSConnectHelper.VersionFromStr(
   const _Val: String): TIDSConnect_Version;
+var
+  lVal : String;
 begin
   //Auch aeltere Versionen werden erkannt - fruehere Antworten mit
   //<Version>1.3</Version> liefen sonst auf Unkown und erzeugten beim
-  //erneuten Senden ein leeres <Version>-Element
-  if SameText(_Val,'2.5.1') then
+  //erneuten Senden ein leeres <Version>-Element.
+  //Leerraum um den Wert ist in XML zulaessig (" 2.5 " ergab frueher Unkown)
+  lVal := Trim(_Val);
+  if SameText(lVal,'2.5.1') then
     Result := TIDSConnect_Version.idsConnectVersion_2_5_1 else
-  if SameText(_Val,'2.5') then
+  if SameText(lVal,'2.5') then
     Result := TIDSConnect_Version.idsConnectVersion_2_5 else
-  if SameText(_Val,'2.3') then
+  if SameText(lVal,'2.3') then
     Result := TIDSConnect_Version.idsConnectVersion_2_3 else
-  if SameText(_Val,'2.0') then
+  if SameText(lVal,'2.0') then
     Result := TIDSConnect_Version.idsConnectVersion_2_0 else
-  if SameText(_Val,'1.3') then
+  if SameText(lVal,'1.3') then
     Result := TIDSConnect_Version.idsConnectVersion_1_3 else
     Result := TIDSConnect_Version.idsConnectVersion_Unkown;
+end;
+
+class function TIDSConnectHelper.SendVersion(
+  const _Val: TIDSConnect_Version): TIDSConnect_Version;
+begin
+  case _Val of
+    idsConnectVersion_2_5,
+    idsConnectVersion_2_5_1 : Result := _Val;
+    idsConnectVersion_1_3,
+    idsConnectVersion_2_0,
+    idsConnectVersion_2_3   : Result := idsConnectVersion_2_5;
+    else                      Result := idsConnectVersion_2_5_1;
+  end;
 end;
 
 class function TIDSConnectHelper.VersionToStr(
@@ -1526,8 +1589,14 @@ var
     if (_Obj.Name2 <> '') then _Val.AppendFormat('  '+'<Name2>%s</Name2>'+#13#10,[TIDSConnectHelper.XmlText(_Obj.Name2,40)]);
     if (_Obj.Name3 <> '') then _Val.AppendFormat('  '+'<Name3>%s</Name3>'+#13#10,[TIDSConnectHelper.XmlText(_Obj.Name3,40)]);
     //Name4 gibt es ab IDS 2.5.1 nicht mehr
-    if (not lIs251) and (_Obj.Name4 <> '') then
-      _Val.AppendFormat('  '+'<Name4>%s</Name4>'+#13#10,[TIDSConnectHelper.XmlText(_Obj.Name4,40)]);
+    if _Obj.Name4 <> '' then
+    begin
+      if lIs251 then
+        TIDSConnect.ReportError('Name4 gibt es ab IDS 2.5.1 nicht mehr und wurde nicht gesendet ("'+
+                                _Obj.Name4+'").',nil)
+      else
+        _Val.AppendFormat('  '+'<Name4>%s</Name4>'+#13#10,[TIDSConnectHelper.XmlText(_Obj.Name4,40)]);
+    end;
 
     //Street1 hat Vorrang; wer nur das alte Street-Feld befuellt hat, wird
     //trotzdem korrekt serialisiert
@@ -1587,12 +1656,31 @@ var
   lTime : TTime;
   lCur : String;
   j : Integer;
+  lVersion : TIDSConnect_Version;
+
+  //Ab IDS 2.5.1 gibt es ein Feld nicht mehr - nicht still verwerfen
+  procedure ReportDropped(const _Field, _Hint : String);
+  begin
+    TIDSConnect.ReportError(Format('%s gibt es ab IDS 2.5.1 nicht mehr und wurde nicht gesendet.%s',
+                            [_Field,_Hint]),nil);
+  end;
+
 begin
   Result := false;
   if _Val = nil then
     exit;
 
-  lIs251 := WarenkorbInfo.Version >= idsConnectVersion_2_5_1;
+  //Frueher wurde lIs251 aus der rohen Version abgeleitet, das Element aber
+  //ueber VersionToStr geschrieben: aus "Unbekannt" wurde so ein Dokument mit
+  //<Version>2.5.1</Version>, 2.5-Schema und 2.5-Struktur, aus 1.3 eines mit
+  //<Version>1.3</Version> und 2.5-Struktur
+  lVersion := TIDSConnectHelper.SendVersion(WarenkorbInfo.Version);
+  if lVersion <> WarenkorbInfo.Version then
+    TIDSConnect.ReportError(Format('Der Warenkorb hat die Version "%s"; gesendet wird er als %s.',
+      [IfThen(WarenkorbInfo.Version = idsConnectVersion_Unkown,'unbekannt',
+              TIDSConnectHelper.VersionToStr(WarenkorbInfo.Version)),
+       TIDSConnectHelper.VersionToStr(lVersion)]),nil);
+  lIs251 := lVersion >= idsConnectVersion_2_5_1;
 
   _Val.Append('<?xml version="1.0" encoding="UTF-8"?>'+#13#10);
   _Val.Append('<Warenkorb xmlns="'+TIDSConnect_XMLNameSpace+'" ');
@@ -1613,7 +1701,7 @@ begin
   _Val.AppendFormat('  '+'<Date>%s</Date>'+#13#10,[TIDSConnectHelper.DateToDateStr(lDate)]);
   _Val.AppendFormat('  '+'<Time>%s</Time>'+#13#10,[TIDSConnectHelper.TimeToTimeStr(lTime)]);
   //<RueckgabeKZ>Warenkorbrueckgabe</RueckgabeKZ> fuer Client nicht erforderlich
-  _Val.Append('  '+'<Version>'+TIDSConnectHelper.VersionToStr(WarenkorbInfo.Version)+'</Version>'+#13#10);
+  _Val.Append('  '+'<Version>'+TIDSConnectHelper.VersionToStr(lVersion)+'</Version>'+#13#10);
   _Val.Append(' '+'</WarenkorbInfo>'+#13#10);
 
   _Val.Append(' '+'<Order>'+#13#10);
@@ -1626,6 +1714,16 @@ begin
   _Val.Append('  '+'<OrderInfo>'+#13#10);
   if lIs251 then
   begin
+    //Die alten Belegnummern werden nicht automatisch zu Referenzen: eine
+    //Referenz verlangt ein Belegdatum, das diese Felder nicht haben
+    if Order.OrderInfo.InquiryNo <> '' then
+      ReportDropped('InquiryNo (Anfragenummer)',' Die Codeliste der Referenzen kennt keine Anfrage.');
+    if Order.OrderInfo.OfferNo <> '' then
+      ReportDropped('OfferNo (Angebotsnummer)',' Stattdessen OrderInfo.Referenzen mit Belegart 310 verwenden.');
+    if Order.OrderInfo.PartNo <> '' then
+      ReportDropped('PartNo (Bestellnummer)',' Stattdessen OrderInfo.Referenzen mit Belegart 220 verwenden.');
+    if Order.OrderInfo.OrderConfNo <> '' then
+      ReportDropped('OrderConfNo (Auftragsbestätigung)',' Stattdessen OrderInfo.Referenzen mit Belegart 231 verwenden.');
     for j := 0 to Order.OrderInfo.Referenzen.Count-1 do
       OutReferenz('   ',Order.OrderInfo.Referenzen[j]);
   end else
@@ -2587,7 +2685,8 @@ begin
     hstrl.Add(HiddenField('name_kunde',_UN,50));
     hstrl.Add(HiddenField('pw_kunde',_Pwd,50));
     //Formular und Warenkorb-XML muessen dieselbe Version melden.
-    hstrl.Add(HiddenField('version',TIDSConnectHelper.VersionToStr(_Warenkorb.WarenkorbInfo.Version),5));
+    hstrl.Add(HiddenField('version',TIDSConnectHelper.VersionToStr(
+      TIDSConnectHelper.SendVersion(_Warenkorb.WarenkorbInfo.Version)),5));
     //Der Browser dekodiert Entities im textarea-Inhalt vor dem Absenden.
     //Das XML muss deshalb ein zweites Mal - diesmal HTML - maskiert werden,
     //sonst kommt ein im XML korrektes &amp; als nacktes & beim Shop an und

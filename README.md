@@ -73,18 +73,40 @@ lWarenkorb.WarenkorbInfo.Version := idsConnectVersion_2_5;
 Beim Einlesen werden beide Fassungen erkannt, ebenso ältere Antworten mit
 Version 1.3, 2.0 und 2.3.
 
+Gesendet wird immer als 2.5 oder 2.5.1 (`TIDSConnectHelper.SendVersion`):
+Ein Warenkorb mit unbekannter Version geht als 2.5.1 hinaus, einer mit 1.3,
+2.0 oder 2.3 – etwa ein empfangener Warenkorb eines älteren Shops – als 2.5,
+der nächstliegenden Struktur. Die Umstellung wird über `IDSCONNECT_ONERROR`
+gemeldet. Versionsangabe im XML, Schema und Struktur sowie das `version`-Feld
+des WKS-Formulars stimmen dabei immer überein.
+
 ### Was 2.5.1 gegenüber 2.5 ändert
 
 * `InquiryNo`, `OfferNo`, `PartNo` und `OrderConfNo` in den Kopfdaten entfallen
   und werden durch beliebig viele `Referenz`-Einträge ersetzt
   (`OrderInfo.Referenzen`, je mit Belegnummer, Belegdatum und Belegart).
+  Sind die alten Felder bei 2.5.1 gefüllt, werden sie nicht gesendet und über
+  `IDSCONNECT_ONERROR` gemeldet. Eine automatische Umsetzung in Referenzen
+  gibt es bewusst nicht: Eine Referenz verlangt ein Belegdatum, das die alten
+  Felder nicht haben. Wer bisher ohne gesetzte Version gearbeitet hat (früher
+  war 2.5 voreingestellt), trägt die Bestellnummer jetzt so ein:
+
+```pascal
+with lWarenkorb.Order.OrderInfo.Referenzen.AddItem do
+begin
+  ReferenzNumber := 'B-4711';
+  ReferenzDate := Bestelldatum;
+  ReferenzType := idsConnectRefType_220;   //Bestellung
+end;
+```
+
 * Belegarten: `220` Bestellung, `231` Bestätigung (Auftrag), `310` Angebot,
   `315` Vertrag.
 * Positionen kennen zusätzlich `SumMaterialSurcharges` (Summe der
   Rohstoffzuschläge), `DiscountableAmount` (skontofähiger Betrag) und eigene
   `Referenz`-Einträge mit Belegposition.
-* Adressen: `Name4` entfällt, `Street` wird zu `Street1` bis `Street3`, die
-  Postleitzahl ist auf 9 Stellen begrenzt.
+* Adressen: `Name4` entfällt (bei 2.5.1 gemeldet, nicht gesendet), `Street`
+  wird zu `Street1` bis `Street3`, die Postleitzahl ist auf 9 Stellen begrenzt.
 * Der Lieferort kann Geokoordinaten tragen (`GeoLat`, `GeoLang`).
 * Rohstoff-Codeliste um `MS` (Messing) und `MK` (MK Kupfer) erweitert.
 * Für die Artikelsuche gibt es die Parameter `multipleResult` und
@@ -190,6 +212,10 @@ ohne Preise erzeugt also dieselben Elemente wie bisher:
 
 Alle Textinhalte werden XML-maskiert; beim Einbetten in das HTML-Formular kommt
 die HTML-Maskierung hinzu.
+Zeichen, die XML 1.0 verbietet (Steuerzeichen außer Tab, LF und CR, z. B. ein
+vertikaler Tab aus Word-Texten, sowie `U+FFFE`, `U+FFFF` und einzelne
+Surrogate), werden entfernt; beim Kürzen auf die Feldlänge wird kein
+Surrogatpaar getrennt.
 
 ## Fehlerbehandlung
 

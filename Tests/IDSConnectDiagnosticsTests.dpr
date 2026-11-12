@@ -12,6 +12,88 @@ begin
     raise Exception.Create(Message);
 end;
 
+function SaveCart(Cart: TIDSConnect_Warenkorb): String;
+var
+  sb: TStringBuilder;
+begin
+  sb := TStringBuilder.Create;
+  try
+    Check(Cart.SaveToString(sb),'SaveToString failed');
+    Result := sb.ToString;
+  finally
+    sb.Free;
+  end;
+end;
+
+procedure CheckSerializer(var LastError: String);
+var
+  Cart, Back: TIDSConnect_Warenkorb;
+  Xml: String;
+  Stream: TStringStream;
+begin
+  Check(TIDSConnectHelper.VersionFromStr(' 2.5 ') = idsConnectVersion_2_5,'Version not trimmed');
+  Check(TIDSConnectHelper.StrMaxLength('ab'+#$D83D#$DE00,3) = 'ab','Surrogate pair split');
+  Check(TIDSConnectHelper.StrMaxLength('ab'+#$D83D#$DE00,4) = 'ab'+#$D83D#$DE00,'Complete pair cut');
+
+  Cart := TIDSConnect_Warenkorb.Create;
+  Back := TIDSConnect_Warenkorb.Create;
+  try
+    with Cart.Order.OrderItems.AddItem do
+    begin
+      ArtNo := 'X1';
+      Qty := 1;
+      Kurztext := 'Kurz';
+      //vertical tab, form feed, U+FFFE, lone surrogates; a valid pair stays
+      Langtext := 'a'#11'b'#12'c'#$FFFE'd'#$D800'e'#$DC00'f'#$D83D#$DE00'g'#9'h';
+    end;
+
+    //Received from an old shop: 1.3 is sent with the 2.5 structure
+    Cart.WarenkorbInfo.Version := idsConnectVersion_1_3;
+    Cart.Order.CustomerInfo.Address.Street := 'Weg 1';
+    LastError := '';
+    Xml := SaveCart(Cart);
+    Check(Pos('<Version>2.5</Version>',Xml) > 0,'1.3 not sent as 2.5');
+    Check(Pos('warenkorb_senden_2_5.xsd',Xml) > 0,'1.3: wrong schema');
+    Check(Pos('<Street>Weg 1</Street>',Xml) > 0,'1.3: not 2.5 structure');
+    Check(Pos('1.3',LastError) > 0,'Version change not reported');
+
+    //Unknown version is sent as 2.5.1 throughout
+    Cart.WarenkorbInfo.Version := idsConnectVersion_Unkown;
+    Xml := SaveCart(Cart);
+    Check(Pos('<Version>2.5.1</Version>',Xml) > 0,'Unknown not sent as 2.5.1');
+    Check(Pos('warenkorb_senden_2_5_1.xsd',Xml) > 0,'Unknown: wrong schema');
+    Check(Pos('<Street1>Weg 1</Street1>',Xml) > 0,'Unknown: not 2.5.1 structure');
+
+    //Fields that 2.5.1 no longer has are reported, not dropped silently
+    Cart.WarenkorbInfo.Version := idsConnectVersion_2_5_1;
+    Cart.Order.OrderInfo.PartNo := 'B-4711';
+    LastError := '';
+    Xml := SaveCart(Cart);
+    Check(Pos('B-4711',Xml) = 0,'PartNo written in 2.5.1');
+    Check((Pos('PartNo',LastError) > 0) and (Pos('220',LastError) > 0),'Dropped PartNo not reported');
+    Cart.Order.OrderInfo.PartNo := '';
+    Cart.Order.CustomerInfo.Address.Name4 := 'Abteilung';
+    LastError := '';
+    Xml := SaveCart(Cart);
+    Check(Pos('Name4',LastError) > 0,'Dropped Name4 not reported');
+    Check(Pos('Abteilung',Xml) = 0,'Name4 written in 2.5.1');
+
+    //Forbidden characters are removed and the document can be read again
+    Check(Pos('<Langtext>abcdef'+#$D83D#$DE00+'g'#9'h</Langtext>',Xml) > 0,
+          'Forbidden characters not removed');
+    Stream := TStringStream.Create(Xml,TEncoding.UTF8);
+    try
+      Check(Back.LoadFromStream(Stream),'Own XML is not well-formed');
+    finally
+      Stream.Free;
+    end;
+    Check(Back.Order.OrderItems[0].Langtext = 'abcdef'+#$D83D#$DE00+'g'#9'h','Langtext round trip');
+  finally
+    Back.Free;
+    Cart.Free;
+  end;
+end;
+
 procedure Run;
 var
   Cart: TIDSConnect_Warenkorb;
@@ -203,6 +285,8 @@ begin
       Merged.Free;
     end;
 
+    CheckSerializer(LastError);
+    Writeln('PASS: serializer versions, dropped 2.5.1 fields, forbidden characters');
     Writeln('PASS: response diagnostics, masked WKE request, selected and default versions for WKE/SV/LI, multiple-return queue/header/duplicates');
   finally
     TIDSConnect.IDSCONNECT_ONREQUEST := nil;
