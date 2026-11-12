@@ -21,7 +21,6 @@ object IDSConnectDlgWebBrowser: TIDSConnectDlgWebBrowser
     TabOrder = 0
     AllowSingleSignOnUsingOSPrimaryAccount = False
     TargetCompatibleBrowserVersion = '117.0.2045.28'
-    UserDataFolder = '%LOCALAPPDATA%\bds.exe.WebView2'
     OnCreateWebViewCompleted = WebBrowserCreateWebViewCompleted
     OnNavigationCompleted = WebBrowserNavigationCompleted
   end

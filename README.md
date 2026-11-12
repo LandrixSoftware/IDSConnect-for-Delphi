@@ -59,7 +59,10 @@ end;
 
 Antwortet der Shop nicht, liefert `IDSConnectLI` `False` und lässt alle drei
 Angaben auf „erforderlich"; `IDSConnectSVBestVersion` liefert dann
-`idsConnectVersion_Unkown`.
+`idsConnectVersion_Unkown` – ebenso, wenn der Shop nur Versionen vor 2.5
+nennt, denn nur 2.5 und 2.5.1 kann die Unit senden. Wer die Liste ohnehin
+mit `IDSConnectSV` abgefragt hat, wertet sie mit
+`TIDSConnect.BestSupportedVersion(Liste)` aus, ohne zweite Abfrage.
 
 ## Version 2.5 oder 2.5.1
 
@@ -155,7 +158,7 @@ Parameter ist eine Zusage der Handwerkssoftware an den Shop („ich kann mehrere
 Rückgaben verarbeiten"), keine Anfrage; die Spezifikation kennt dafür weder in
 `SV` noch in `LI` ein Merkmal. Praktisch bleibt nur, es je Großhändler einmal
 auszuprobieren und zu hinterlegen — im Beispielprojekt über den Schlüssel
-`MultipleResult` in der `configuration.ini`.
+`MultipleResult` in der `config.ini`.
 
 Standardmäßig wartet der Dialog nach jeder Rückgabe die volle zugesagte Frist
 auf weitere. Sendet ein Shop nur einmal, beendet der Anwender den Vorgang mit
@@ -189,7 +192,10 @@ löscht sie. Ein eigener Hook-Server muss sich genauso verhalten.
 
 Nach dem Absenden zeigt die Unit einen Warte-Dialog und fragt die Hook-URL im
 Abstand von zwei Sekunden ab, bis die Rückübertragung eintrifft, der Anwender
-abbricht oder das Zeitlimit abläuft:
+abbricht oder das Zeitlimit abläuft. Der Abruf läuft im Hintergrund, der
+Dialog bleibt auch bei einem nicht erreichbaren Server bedienbar;
+`IDSCONNECT_ONERROR` und `IDSCONNECT_ONRESPONSE` werden trotzdem im
+Hauptthread aufgerufen:
 
 ```pascal
 //Sekunden; 0 = ohne Zeitbegrenzung warten, bis der Anwender abbricht
@@ -239,6 +245,9 @@ Gemeldet werden außerdem:
   Originalwert. Übernommen werden sie als `PCE` bzw. `CU` – wer den Fall
   fachlich behandeln will, wertet die Meldung aus;
 * Referenzen ohne Belegdatum (Muss-Feld); sie werden nicht gesendet;
+* eine Shop- oder Hook-Adresse mit `http://` statt `https://` (außer
+  `localhost`). Mit `TIDSConnect.IDSCONNECT_REQUIRE_HTTPS_HOOK := True` bricht
+  ein Aufruf mit unverschlüsselter Hook-URL zusätzlich ab;
 * beim Senden als 2.5.1 Felder, die es dort nicht mehr gibt (siehe oben).
 
 Scheitert das Einlesen einer Rückgabe, bleibt der übergebene Warenkorb
@@ -265,7 +274,10 @@ den Parameter `_TmpFilename`:
 * **gesetzt** — das Formular wird in diese Datei geschrieben und im
   Standardbrowser geöffnet
 * **leer** — das Formular wird direkt im integrierten Browser angezeigt; es
-  entsteht keine Datei mit Zugangsdaten auf der Platte
+  entsteht keine Datei mit Zugangsdaten auf der Platte. Ausnahme: Ein
+  Formular über rund 1,5 MB (sehr großer WKS-Warenkorb) überschreitet die
+  Grenze von `NavigateToString` und wird aus einer eindeutig benannten
+  Temp-Datei geladen, die beim Schließen des Dialogs gelöscht wird
 
 Im integrierten Browser erkennt der Dialog den Sprung auf die Hook-URL selbst
 und schließt sich; der Warenkorb wird danach abgeholt. Beim Standardbrowser
@@ -301,9 +313,14 @@ Password=...
 Customernumber=...
 IDSConnectUrl=https://...
 Version=2.5.1
-DemoArticle=...        ;optional, füllt das Feld Artikelnummer
-MultipleResult=1       ;optional, Shop beherrscht die Mehrfachrückgabe
+; optional, füllt das Feld Artikelnummer
+DemoArticle=...
+; optional, Shop beherrscht die Mehrfachrückgabe
+MultipleResult=1
 ```
+
+Kommentare gehören auf eigene Zeilen: `TMemIniFile` liest einen Kommentar
+hinter dem Wert mit, aus `MultipleResult=1 ;optional` würde so `false`.
 
 Der Schalter „Shop-Infos (SV / LI)" fragt beim ausgewählten Anbieter die
 unterstützten Schnittstellenversionen und die benötigten Anmeldedaten ab.
@@ -398,12 +415,11 @@ Kodierungserkennung, Namensraum-Präfixe und gemischten Inhalt.
 | Lieferant | ja | geplant | nein | Version |
 |----------|----------|----------|----------|----------
 | Pfeiffer & May | x | - | - | 2.5 |
-
-| GC-Gruppe | x | - | - |
-| Pietsch | x | - | - |
-| Pürsch | - | - | x |
-| Sanitär-Heinze | x | - | - |
-| ZVSHK | x | - | - |
+| GC-Gruppe | x | - | - | |
+| Pietsch | x | - | - | |
+| Pürsch | - | - | x | |
+| Sanitär-Heinze | x | - | - | |
+| ZVSHK | x | - | - | |
 
 # Lizenz / License IDSConnect-for-Delphi
 

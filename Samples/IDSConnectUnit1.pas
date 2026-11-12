@@ -83,7 +83,7 @@ type
     function SelectedSection : String;
     function TempHtmlFilename : String;
     //Ob der Shop die Mehrfachrueckgabe beherrscht, ist nicht abfragbar und
-    //wird deshalb je Anbieter in der configuration.ini hinterlegt
+    //wird deshalb je Anbieter in der config.ini hinterlegt
     function UseMultipleResult : Boolean;
     procedure ShowWarenkorb(_Warenkorb : TIDSConnect_Warenkorb);
     procedure HandleIDSError(const _Message : String; _E : Exception);
@@ -403,8 +403,9 @@ begin
       if TIDSConnect.IDSConnectSV(lUrl,lVersions,lVersion) then
       begin
         Memo1.Lines.Add('Unterstützte Versionen: '+lVersions.CommaText);
+        //Dieselbe Liste auswerten statt einer zweiten SV-Abfrage
         Memo1.Lines.Add('Höchste gemeinsame Version: '+
-          TIDSConnectHelper.VersionToStr(TIDSConnect.IDSConnectSVBestVersion(lUrl,lVersion)));
+          TIDSConnectHelper.VersionToStr(TIDSConnect.BestSupportedVersion(lVersions)));
       end else
         Memo1.Lines.Add('Versionsabfrage (SV) nicht beantwortet.');
     finally
@@ -423,9 +424,9 @@ begin
 
     //Die Mehrfachrueckgabe laesst sich nicht abfragen - sie ist eine Zusage
     //der Handwerkssoftware an den Shop. Deshalb wird sie je Anbieter in der
-    //configuration.ini hinterlegt.
+    //config.ini hinterlegt.
     Memo1.Lines.Add('');
-    Memo1.Lines.Add('Mehrfachrückgabe laut configuration.ini: '+
+    Memo1.Lines.Add('Mehrfachrückgabe laut config.ini: '+
                     BoolToStr(UseMultipleResult,true)+
                     '  (Schlüssel MultipleResult, nicht abfragbar)');
   finally
@@ -611,7 +612,7 @@ begin
               Edit2.Text,
               lWarenkorb,
               //ab IDS 2.5.1: Mehrfachrueckgabe nur, wenn der Anbieter sie laut
-              //configuration.ini beherrscht. Die Hook-URL bleibt jeweils
+              //config.ini beherrscht. Die Hook-URL bleibt jeweils
               //300 Sekunden nach der letzten Rueckgabe aktiv.
               UseMultipleResult,300,lVersion) then
     begin
@@ -643,9 +644,14 @@ begin
                         'Password=...'+sLineBreak+
                         'Customernumber=...'+sLineBreak+
                         'IDSConnectUrl=https://...'+sLineBreak+
-                        'Version=2.5.1          ; 2.5 oder 2.5.1'+sLineBreak+
-                        'DemoArticle=...        ; optional, füllt das Feld Artikelnummer'+sLineBreak+
-                        'MultipleResult=1       ; optional, Shop beherrscht die Mehrfachrückgabe'+sLineBreak+sLineBreak+
+                        //Kommentare auf eigenen Zeilen: TMemIniFile liest einen
+                        //Kommentar hinter dem Wert mit ("1 ; ..." ist kein Boolean)
+                        '; 2.5 oder 2.5.1'+sLineBreak+
+                        'Version=2.5.1'+sLineBreak+
+                        '; optional, füllt das Feld Artikelnummer'+sLineBreak+
+                        'DemoArticle=...'+sLineBreak+
+                        '; optional, Shop beherrscht die Mehrfachrückgabe'+sLineBreak+
+                        'MultipleResult=1'+sLineBreak+sLineBreak+
                         'Die HookUrl ist die eigene Rücksprungadresse, über die der Shop'+sLineBreak+
                         'den Warenkorb zurückschickt. Ein passendes Serverskript liegt'+sLineBreak+
                         'dem Projekt als idsconnect.php bei.';

@@ -25,6 +25,9 @@ type
   private
     isInitialized : Boolean;
     content : String;
+    //Temporaere Datei fuer Inhalte jenseits der Grenze von NavigateToString;
+    //wird beim Freigeben des Dialogs geloescht
+    contentFile : String;
     //Praefix der Ruecksprungadresse. Sobald der Browser dorthin navigiert,
     //gilt die Rueck-Kommunikation als abgeschlossen. Frueher war hier
     //"https://www.landrix.de" fest verdrahtet - bei jeder anderen Hook-URL
@@ -43,6 +46,7 @@ type
     onTransfer : TFunc<Integer>;
     collectTimer : TTimer;
     collecting : Boolean;
+    function LoadContent : Boolean;
     procedure ReturnToShop;
     procedure Collect;
     procedure UpdateCaption;
@@ -95,7 +99,7 @@ begin
     exit;
   end;
 
-  if not WebBrowser.NavigateToString(content) then
+  if not LoadContent then
   begin
     MessageDlg('Der Inhalt konnte nicht angezeigt werden.',mtError,[mbOk],0);
     ModalResult := mrAbort;
@@ -116,7 +120,7 @@ begin
     if returning then
     begin
       returning := false;
-      WebBrowser.NavigateToString(content);
+      LoadContent;
     end;
     exit;
   end;
@@ -188,7 +192,71 @@ begin
   if WebBrowser.CanGoBack then
     WebBrowser.GoBack
   else
-    WebBrowser.NavigateToString(content);
+    LoadContent;
+end;
+
+//Wandelt einen Dateipfad in eine file-URL. Zeichen ausserhalb der
+//unreservierten Menge (auch #, %, ?, Leerzeichen, Umlaute) werden als UTF-8
+//prozentkodiert; ein UNC-Pfad \\server\freigabe wird zu file://server/freigabe.
+function FileToUrl(const _Path : String) : String;
+var
+  lPath, lPrefix : String;
+  lBytes : TBytes;
+  i : Integer;
+  b : Byte;
+begin
+  lPath := StringReplace(_Path,'\','/',[rfReplaceAll]);
+  if StartsStr('//',lPath) then
+  begin
+    lPrefix := 'file:';
+    //der Rest beginnt mit //server/...
+  end else
+  begin
+    lPrefix := 'file:///';
+  end;
+  lBytes := TEncoding.UTF8.GetBytes(lPath);
+  Result := lPrefix;
+  for i := 0 to Length(lBytes)-1 do
+  begin
+    b := lBytes[i];
+    if (AnsiChar(b) in ['A'..'Z','a'..'z','0'..'9','-','.','_','~','/']) or
+       ((AnsiChar(b) = ':') and (i = 1) and (lPrefix = 'file:///')) then
+      Result := Result+Char(b)
+    else
+      Result := Result+'%'+IntToHex(b,2);
+  end;
+end;
+
+function TIDSConnectDlgWebBrowser.LoadContent: Boolean;
+const
+  //NavigateToString nimmt laut WebView2-Dokumentation hoechstens 2 MB an;
+  //ein sehr grosser WKS-Warenkorb scheiterte daran mit "Inhalt konnte nicht
+  //angezeigt werden". Mit Abstand zur Grenze, gemessen in UTF-16-Bytes.
+  MaxInlineBytes = 1500000;
+begin
+  if Length(content)*SizeOf(Char) <= MaxInlineBytes then
+  begin
+    Result := WebBrowser.NavigateToString(content);
+    exit;
+  end;
+  //Der Inhalt enthaelt die Zugangsdaten: eindeutiger Name und Loeschen beim
+  //Schliessen des Dialogs
+  Result := false;
+  try
+    if contentFile = '' then
+    begin
+      contentFile := TPath.Combine(TPath.GetTempPath,
+                       'idsconnect-'+TGUID.NewGuid.ToString.Trim(['{','}'])+'.html');
+      TFile.WriteAllText(contentFile,content,TEncoding.UTF8);
+    end;
+    //Der Pfad kann Leerzeichen, # oder % enthalten (Benutzername) - frueher
+    //wurden nur Leerzeichen kodiert, ein # schnitt die URL als Fragment ab
+    Result := WebBrowser.Navigate(FileToUrl(contentFile));
+  except
+    on E:Exception do
+      MessageDlg('Die temporäre Datei für den Browser konnte nicht angelegt werden:'+sLineBreak+
+                 E.Message,mtError,[mbOk],0);
+  end;
 end;
 
 class function TIDSConnectDlgWebBrowser.ResolveCachePath(const _CachePath: String): String;
@@ -216,6 +284,7 @@ class function TIDSConnectDlgWebBrowser.ShowDialog(const _IDSHTMLValue,_CachePat
   _OnTransfer : TFunc<Integer>): Boolean;
 var
   lDlg : TIDSConnectDlgWebBrowser;
+  lContentFile : String;
   lBounds, lWorkArea : TRect;
   lWidth, lHeight : Integer;
 begin
@@ -266,7 +335,12 @@ begin
     //Die Lebensdauer gehoert eindeutig hierher. Das fruehere Action := caFree
     //im OnClose hat zusaetzlich Release gepostet - zusammen mit diesem Free
     //war das ein latenter Double-Free.
+    lContentFile := lDlg.contentFile;
     lDlg.Free;
+    //Erst nach dem Freigeben loeschen, wenn der Browser die Datei nicht
+    //mehr offen hat
+    if lContentFile <> '' then
+      System.SysUtils.DeleteFile(lContentFile);
   end;
 end;
 

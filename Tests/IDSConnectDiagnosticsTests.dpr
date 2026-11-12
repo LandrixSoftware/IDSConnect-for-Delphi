@@ -30,8 +30,20 @@ var
   Cart, Back: TIDSConnect_Warenkorb;
   Xml: String;
   Stream: TStringStream;
+  List: TStringList;
 begin
   Check(TIDSConnectHelper.VersionFromStr(' 2.5 ') = idsConnectVersion_2_5,'Version not trimmed');
+  List := TStringList.Create;
+  try
+    List.CommaText := '1.3,2.0,2.3';
+    Check(TIDSConnect.BestSupportedVersion(List) = idsConnectVersion_Unkown,'Version < 2.5 offered as best');
+    List.CommaText := '2.3,2.5';
+    Check(TIDSConnect.BestSupportedVersion(List) = idsConnectVersion_2_5,'Best version 2.5 missed');
+    List.CommaText := '2.5.1,2.5';
+    Check(TIDSConnect.BestSupportedVersion(List) = idsConnectVersion_2_5_1,'Best version 2.5.1 missed');
+  finally
+    List.Free;
+  end;
   Check(TIDSConnectHelper.StrMaxLength('ab'+#$D83D#$DE00,3) = 'ab','Surrogate pair split');
   Check(TIDSConnectHelper.StrMaxLength('ab'+#$D83D#$DE00,4) = 'ab'+#$D83D#$DE00,'Complete pair cut');
 
@@ -120,6 +132,9 @@ var
   Merged: TIDSConnect_Warenkorb;
   LastError: String;
   RolReports: Integer;
+  OffMainThread, Done: Boolean;
+  AllErrors: String;
+  Worker: TThread;
 begin
   BaseUrl := ParamStr(1);
   Check(BaseUrl <> '', 'Missing local mock URL');
@@ -130,6 +145,9 @@ begin
       begin
         Writeln('Diagnostic: '+Message);
         LastError := Message;
+        AllErrors := AllErrors+Message+'|';
+        if TThread.CurrentThread.ThreadID <> MainThreadID then
+          OffMainThread := true;
         if Pos('ROL',Message) > 0 then
           Inc(RolReports);
       end;
@@ -335,6 +353,57 @@ begin
     LastError := '';
     TIDSConnect.IDSConnectWKE('https://shop.invalid/ids','','','',TPath.GetTempPath,Cart);
     Check(Pos('temporaere Datei',LastError) > 0,'Empty credentials still block WKE: '+LastError);
+
+    //The wait dialog polls in a background task: callbacks must still arrive
+    //on the main thread
+    OffMainThread := false;
+    Done := false;
+    RolReports := 0;
+    LastError := '';
+    TIDSConnect.IDSCONNECT_ONRESPONSE :=
+      procedure(const Url: String; Code: Integer; const Data: TBytes)
+      begin
+        if TThread.CurrentThread.ThreadID <> MainThreadID then
+          OffMainThread := true;
+      end;
+    Worker := TThread.CreateAnonymousThread(
+      procedure
+      var
+        WorkerState: TIDSConnect.TCollectState;
+        WorkerCart: TIDSConnect_Warenkorb;
+      begin
+        WorkerCart := TIDSConnect_Warenkorb.Create;
+        try
+          WorkerState := Default(TIDSConnect.TCollectState);
+          TIDSConnect.CollectResults(BaseUrl+'/sticky-unknown',WorkerCart,WorkerState);
+        finally
+          WorkerCart.Free;
+          Done := true;
+        end;
+      end);
+    Worker.Start;
+    while not Done do
+      CheckSynchronize(10);
+    Check(RolReports = 1,'Background report missing: '+IntToStr(RolReports));
+    Check(not OffMainThread,'Callback ran outside the main thread');
+    TIDSConnect.IDSCONNECT_ONRESPONSE := nil;
+
+    //http instead of https is reported (not for localhost), the hook can be enforced
+    AllErrors := '';
+    TIDSConnect.IDSConnectWKE('http://shop.example/ids','c','u','p',TPath.GetTempPath,Cart);
+    Check(Pos('http statt https',AllErrors) > 0,'http shop URL not reported');
+    AllErrors := '';
+    TIDSConnect.IDSConnectWKE('https://shop.example/ids','c','u','p',TPath.GetTempPath,Cart);
+    Check(Pos('http statt https',AllErrors) = 0,'localhost hook reported: '+AllErrors);
+    TIDSConnect.IDSCONNECT_HOOKURL := 'http://hook.example/idsconnect.php';
+    TIDSConnect.IDSCONNECT_REQUIRE_HTTPS_HOOK := true;
+    AllErrors := '';
+    Check(not TIDSConnect.IDSConnectWKE('https://shop.example/ids','c','u','p',TPath.GetTempPath,Cart),
+          'http hook accepted although enforced');
+    Check((Pos('REQUIRE_HTTPS_HOOK',AllErrors) > 0) and (Pos('temporaere Datei',AllErrors) = 0),
+          'Enforced http hook did not abort early: '+AllErrors);
+    TIDSConnect.IDSCONNECT_REQUIRE_HTTPS_HOOK := false;
+    TIDSConnect.IDSCONNECT_HOOKURL := BaseUrl+'/callback';
 
     Writeln('PASS: kept cart on failed fetch, unknown codes, missing input reported, empty credentials allowed');
     Writeln('PASS: response diagnostics, masked WKE request, selected and default versions for WKE/SV/LI, multiple-return queue/header/duplicates');

@@ -56,8 +56,13 @@ type
     FBaseText : String;
     FFollowUpSec : Integer;
     FGetReceived : TFunc<Integer>;
+    FCancelRequested : Boolean;
     procedure DoTimer(Sender : TObject);
     procedure DoCancel(Sender : TObject);
+    procedure DoCloseQuery(Sender : TObject; var CanClose : Boolean);
+    procedure PollDone(_Result : TIDSConnectPollResult);
+    procedure Finish(_Result : TModalResult);
+    function CheckTimeout : Boolean;
     procedure UpdateCaption;
   public
     //Anzahl der bereits uebernommenen Rueckgaben
@@ -75,6 +80,10 @@ type
     //_GetReceived liefert die tatsaechliche Anzahl uebernommener Rueckgaben,
     //wenn ein Abruf mehrere auf einmal uebernehmen kann; ohne wird je
     //idsPollReceived/idsPollFinished um eins gezaehlt.
+    //_OnPoll laeuft in einem Hintergrund-Task, damit der Dialog bedienbar
+    //bleibt, auch wenn ein Abruf haengt. Es laeuft hoechstens ein Abruf
+    //zugleich, und der Dialog schliesst erst, wenn er beendet ist.
+    //_GetReceived wird im Hauptthread aufgerufen.
     class function Execute(const _Caption,_Text : String; _TimeoutSec : Integer;
                            _OnPoll : TIDSConnectPollEvent;
                            _IntervalMS : Integer = 2000;
@@ -85,7 +94,7 @@ type
 implementation
 
 uses
-  System.DateUtils;
+  System.DateUtils, System.Threading;
 
 { TIDSConnectDlgWait }
 
@@ -120,17 +129,55 @@ begin
   FTimer := TTimer.Create(Self);
   FTimer.Enabled := false;
   FTimer.OnTimer := DoTimer;
+
+  OnCloseQuery := DoCloseQuery;
+end;
+
+procedure TIDSConnectDlgWait.Finish(_Result: TModalResult);
+begin
+  FTimer.Enabled := false;
+  ModalResult := _Result;
 end;
 
 procedure TIDSConnectDlgWait.DoCancel(Sender: TObject);
 begin
-  FTimer.Enabled := false;
+  //Laeuft gerade ein Abruf, wird erst nach dessen Ende geschlossen - er
+  //greift noch auf den Warenkorb des Aufrufers zu
+  if FBusy then
+  begin
+    FCancelRequested := true;
+    FCancelBtn.Enabled := false;
+    FCancelBtn.Caption := 'Wird beendet ...';
+    exit;
+  end;
   //Wurde bereits etwas uebernommen, ist der Abbruch trotzdem ein Erfolg -
   //bei der Mehrfachrueckgabe beendet der Anwender den Vorgang selbst
   if FReceived > 0 then
-    ModalResult := mrOk
+    Finish(mrOk)
   else
-    ModalResult := mrCancel;
+    Finish(mrCancel);
+end;
+
+procedure TIDSConnectDlgWait.DoCloseQuery(Sender: TObject; var CanClose: Boolean);
+begin
+  //Schliessen ueber das Fensterkreuz wie Abbrechen behandeln
+  if FBusy then
+  begin
+    CanClose := false;
+    DoCancel(nil);
+  end;
+end;
+
+function TIDSConnectDlgWait.CheckTimeout: Boolean;
+begin
+  Result := (FTimeoutSec > 0) and (Now > FDeadline);
+  if not Result then
+    exit;
+  //Bereits uebernommene Rueckgaben zaehlen als Erfolg
+  if FReceived > 0 then
+    Finish(mrOk)
+  else
+    Finish(mrAbort);
 end;
 
 procedure TIDSConnectDlgWait.UpdateCaption;
@@ -157,56 +204,83 @@ begin
 end;
 
 procedure TIDSConnectDlgWait.DoTimer(Sender: TObject);
+var
+  lPoll : TIDSConnectPollEvent;
 begin
   //Ein noch laufender Abruf darf nicht erneut angestossen werden
   if FBusy then
     exit;
-  FBusy := true;
-  try
-    if not Assigned(FOnPoll) then
-      exit;
-    case FOnPoll() of
-      idsPollFinished:
-        begin
-          Inc(FReceived);
-          FTimer.Enabled := false;
-          ModalResult := mrOk;
-          exit;
-        end;
-      idsPollReceived:
-        begin
-          //Weitere Rueckgaben moeglich: die Frist beginnt von vorn.
-          //Nach der ersten Rueckgabe wird nur noch die - in der Regel deutlich
-          //kuerzere - Nachlauffrist gewartet.
-          if Assigned(FGetReceived) then
-            FReceived := FGetReceived()
-          else
-            Inc(FReceived);
-          if FFollowUpSec > 0 then
-          begin
-            FTimeoutSec := FFollowUpSec;
-            FDeadline := IncSecond(Now,FFollowUpSec);
-            FProgress.Style := pbstNormal;
-          end else
-          if FTimeoutSec > 0 then
-            FDeadline := IncSecond(Now,FTimeoutSec);
-        end;
-    end;
-
-    if (FTimeoutSec > 0) and (Now > FDeadline) then
-    begin
-      FTimer.Enabled := false;
-      //Bereits uebernommene Rueckgaben zaehlen als Erfolg
-      if FReceived > 0 then
-        ModalResult := mrOk
-      else
-        ModalResult := mrAbort;
-      exit;
-    end;
-    UpdateCaption;
-  finally
-    FBusy := false;
+  if FCancelRequested then
+  begin
+    DoCancel(nil);
+    exit;
   end;
+  if CheckTimeout then
+    exit;
+  if not Assigned(FOnPoll) then
+    exit;
+  //Frueher lief der Abruf hier synchron im Timer: war der Server nicht
+  //erreichbar, fror der Dialog bei jedem Versuch 5 bis 15 Sekunden ein und
+  //"Abbrechen" reagierte kaum
+  FBusy := true;
+  UpdateCaption;
+  lPoll := FOnPoll;
+  TTask.Run(
+    procedure
+    var
+      lResult : TIDSConnectPollResult;
+    begin
+      try
+        lResult := lPoll();
+      except
+        //Die Abruffunktionen fangen ihre Fehler selbst ab; eine dennoch
+        //durchgereichte Exception darf den Dialog nicht blockieren
+        lResult := idsPollNothing;
+      end;
+      TThread.Queue(nil,
+        procedure
+        begin
+          PollDone(lResult);
+        end);
+    end);
+end;
+
+procedure TIDSConnectDlgWait.PollDone(_Result: TIDSConnectPollResult);
+begin
+  FBusy := false;
+  case _Result of
+    idsPollFinished:
+      begin
+        Inc(FReceived);
+        Finish(mrOk);
+        exit;
+      end;
+    idsPollReceived:
+      begin
+        //Weitere Rueckgaben moeglich: die Frist beginnt von vorn.
+        //Ist eine Nachlauffrist gesetzt, wird nur noch diese gewartet.
+        if Assigned(FGetReceived) then
+          FReceived := FGetReceived()
+        else
+          Inc(FReceived);
+        if FFollowUpSec > 0 then
+        begin
+          FTimeoutSec := FFollowUpSec;
+          FDeadline := IncSecond(Now,FFollowUpSec);
+          FProgress.Style := pbstNormal;
+        end else
+        if FTimeoutSec > 0 then
+          FDeadline := IncSecond(Now,FTimeoutSec);
+      end;
+  end;
+  if FCancelRequested then
+  begin
+    DoCancel(nil);
+    exit;
+  end;
+  if CheckTimeout then
+    exit;
+  UpdateCaption;
 end;
 
 class function TIDSConnectDlgWait.Execute(const _Caption, _Text: String;
@@ -243,7 +317,18 @@ begin
     lDlg.FTimer.Interval := _IntervalMS;
     lDlg.FTimer.Enabled := true;
     lDlg.UpdateCaption;
-    lDlg.ShowModal;
+    try
+      lDlg.ShowModal;
+    finally
+      //Normalerweise endet ShowModal erst nach dem laufenden Abruf. Beim
+      //Beenden der Anwendung (Application.Terminate) verlaesst die VCL
+      //ShowModal aber ohne OnCloseQuery - der Task greift dann noch auf den
+      //Dialog und den Warenkorb zu. Deshalb hier auf sein Ende warten und
+      //dabei seine Synchronize-/Queue-Aufrufe weiter abarbeiten.
+      lDlg.FTimer.Enabled := false;
+      while lDlg.FBusy do
+        CheckSynchronize(50);
+    end;
     Result := lDlg.FReceived > 0;
   finally
     lDlg.Free;

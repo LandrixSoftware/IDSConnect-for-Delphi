@@ -55,6 +55,11 @@ type
     //verwirft dann aber Rueckgaben, die der Shop innerhalb der zugesagten
     //Frist noch sendet.
     IDSCONNECT_MULTIPLERESULT_FOLLOWUP : Integer;
+    //Eine Shop- oder Hook-Adresse mit http:// statt https:// wird ueber
+    //IDSCONNECT_ONERROR gemeldet (ausser localhost). Mit true wird ein Aufruf
+    //mit einer http-Hook-URL zusaetzlich abgebrochen - ueber die Hook-URL
+    //laufen Warenkorb, Preise und Kundendaten.
+    IDSCONNECT_REQUIRE_HTTPS_HOOK : Boolean;
   public const
     //Hoechstzahl der Abrufe in einem Durchgang von CollectResults - schuetzt
     //vor einer Endlosschleife, falls ein Hook-Server die Rueckgabe beim Abruf
@@ -83,6 +88,11 @@ type
     end;
   private
     class procedure ReportError(const _Message : String; _E : Exception);
+    //Meldet eine unverschluesselte Adresse; false, wenn der Aufruf deshalb
+    //abgebrochen werden soll (nur mit _Enforce)
+    class function CheckHttps(const _Action, _What, _Url : String; _Enforce : Boolean = false) : Boolean;
+    //Ruft IDSCONNECT_ONRESPONSE auf, aus einem Hintergrund-Thread synchronisiert
+    class procedure NotifyResponse(const _Url : String; _StatusCode : Integer; const _Body : TBytes);
     class function GetUuid : String;
     class function HookUrlWithSid(const _Sid : String) : String;
     class function TryFetchResult(const _Url : String;_Warenkorb : TIDSConnect_Warenkorb) : Boolean; overload;
@@ -157,9 +167,13 @@ type
     class function IDSConnectSV(const _ServiceURL : String; _Versions : TStrings;
       _Version : TIDSConnect_Version = idsConnectVersion_2_5_1) : Boolean;
     //Liefert die hoechste Version, die sowohl der Shop als auch diese Unit
-    //beherrscht - oder idsConnectVersion_Unkown, wenn die Abfrage scheitert.
+    //beherrscht (2.5 oder 2.5.1) - oder idsConnectVersion_Unkown, wenn die
+    //Abfrage scheitert oder der Shop nur aeltere Versionen nennt.
     class function IDSConnectSVBestVersion(const _ServiceURL : String;
       _Version : TIDSConnect_Version = idsConnectVersion_2_5_1) : TIDSConnect_Version;
+    //Wertet eine bereits mit IDSConnectSV abgefragte Liste aus - spart eine
+    //zweite SV-Abfrage, wenn die Liste auch angezeigt werden soll
+    class function BestSupportedVersion(_Versions : TStrings) : TIDSConnect_Version;
     class procedure IDSConnectADT(const _ServiceURL,_Cst,_UN,_Pwd,_ArtNr,_TmpFilename : String;
       _Version : TIDSConnect_Version = idsConnectVersion_2_5_1);
     class function  IDSConnectWKE(const _ServiceURL,_Cst,_UN,_Pwd,_TmpFilename : String;_Warenkorb : TIDSConnect_Warenkorb;
@@ -1977,9 +1991,91 @@ end;
 { TIDSConnect }
 
 class procedure TIDSConnect.ReportError(const _Message: String; _E: Exception);
+var
+  lMessage : String;
+  lE : Exception;
 begin
-  if Assigned(TIDSConnect.IDSCONNECT_ONERROR) then
+  if not Assigned(TIDSConnect.IDSCONNECT_ONERROR) then
+    exit;
+  if TThread.CurrentThread.ThreadID = MainThreadID then
+  begin
     TIDSConnect.IDSCONNECT_ONERROR(_Message,_E);
+    exit;
+  end;
+  //Der Warte-Dialog ruft ab im Hintergrund; der Callback zeigt aber
+  //typischerweise etwas an und muss deshalb im Hauptthread laufen
+  lMessage := _Message;
+  lE := _E;
+  TThread.Synchronize(nil,
+    procedure
+    begin
+      if Assigned(TIDSConnect.IDSCONNECT_ONERROR) then
+        TIDSConnect.IDSCONNECT_ONERROR(lMessage,lE);
+    end);
+end;
+
+class function TIDSConnect.CheckHttps(const _Action, _What, _Url: String;
+  _Enforce: Boolean): Boolean;
+var
+  lHost : String;
+  p : Integer;
+begin
+  Result := true;
+  if not StartsText('http://',Trim(_Url)) then
+    exit;
+  lHost := Copy(Trim(_Url),8,MaxInt);
+  p := 1;
+  while (p <= Length(lHost)) and not CharInSet(lHost[p],['/','?','#']) do
+    Inc(p);
+  lHost := LowerCase(Copy(lHost,1,p-1));
+  //Benutzerangaben vor dem Host abschneiden, Port entfernen
+  p := LastDelimiter('@',lHost);
+  if p > 0 then
+    lHost := Copy(lHost,p+1,MaxInt);
+  if StartsText('[',lHost) then
+    lHost := Copy(lHost,1,Pos(']',lHost))
+  else
+  begin
+    p := Pos(':',lHost);
+    if p > 0 then
+      lHost := Copy(lHost,1,p-1);
+  end;
+  //Lokale Test- und Entwicklungsumgebungen nicht anmahnen
+  if (lHost = 'localhost') or (lHost = '127.0.0.1') or (lHost = '[::1]') then
+    exit;
+  if _Enforce then
+  begin
+    ReportError(Format('%s: %s verwendet http statt https und ist wegen IDSCONNECT_REQUIRE_HTTPS_HOOK '+
+                       'nicht zulässig (%s).',[_Action,_What,_Url]),nil);
+    Result := false;
+  end else
+    ReportError(Format('%s: %s verwendet http statt https; Zugangsdaten und Warenkorb gehen '+
+                       'unverschlüsselt über das Netz (%s).',[_Action,_What,_Url]),nil);
+end;
+
+class procedure TIDSConnect.NotifyResponse(const _Url: String;
+  _StatusCode: Integer; const _Body: TBytes);
+var
+  lUrl : String;
+  lStatus : Integer;
+  lBody : TBytes;
+begin
+  if not Assigned(IDSCONNECT_ONRESPONSE) then
+    exit;
+  if TThread.CurrentThread.ThreadID = MainThreadID then
+  begin
+    IDSCONNECT_ONRESPONSE(_Url,_StatusCode,_Body);
+    exit;
+  end;
+  lUrl := _Url;
+  lStatus := _StatusCode;
+  lBody := _Body;
+  TThread.Synchronize(nil,
+    procedure
+    begin
+      if Assigned(IDSCONNECT_ONRESPONSE) then
+        IDSCONNECT_ONRESPONSE(lUrl,lStatus,lBody);
+    end);
 end;
 
 class function TIDSConnect.GetUuid: String;
@@ -2015,6 +2111,7 @@ begin
   _Response := '';
   if _ServiceURL = '' then
     exit;
+  CheckHttps(_Action,'Die Shop-Adresse',_ServiceURL);
 
   http := THTTPClient.Create;
   vcHelper := TIDSConnect.TValidateCertificatHelper.Create;
@@ -2167,25 +2264,35 @@ class function TIDSConnect.IDSConnectSVBestVersion(
   const _ServiceURL: String; _Version : TIDSConnect_Version): TIDSConnect_Version;
 var
   lVersions : TStringList;
-  i : Integer;
-  lVer : TIDSConnect_Version;
 begin
   Result := idsConnectVersion_Unkown;
   lVersions := TStringList.Create;
   try
-    if not IDSConnectSV(_ServiceURL,lVersions,_Version) then
-      exit;
-    //Hinweis: Die Beispielantwort der Spezifikation listet nur 1.3 bis 2.3
-    //auf; Shops, die 2.5 oder 2.5.1 koennen, melden das entsprechend.
-    //Unbekannte Angaben werden uebergangen.
-    for i := 0 to lVersions.Count-1 do
-    begin
-      lVer := TIDSConnectHelper.VersionFromStr(lVersions[i]);
-      if (lVer <> idsConnectVersion_Unkown) and (lVer > Result) then
-        Result := lVer;
-    end;
+    if IDSConnectSV(_ServiceURL,lVersions,_Version) then
+      Result := BestSupportedVersion(lVersions);
   finally
     lVersions.Free;
+  end;
+end;
+
+class function TIDSConnect.BestSupportedVersion(_Versions: TStrings): TIDSConnect_Version;
+var
+  i : Integer;
+  lVer : TIDSConnect_Version;
+begin
+  Result := idsConnectVersion_Unkown;
+  if _Versions = nil then
+    exit;
+  //Nur 2.5 und 2.5.1 zaehlen - aeltere Versionen kann diese Unit nicht
+  //erzeugen. Frueher wurde auch 1.3 bis 2.3 geliefert, entgegen dem
+  //Kommentar der Deklaration. Die Beispielantwort der Spezifikation listet
+  //nur 1.3 bis 2.3 auf; Shops, die 2.5 oder 2.5.1 koennen, melden das
+  //entsprechend. Unbekannte Angaben werden uebergangen.
+  for i := 0 to _Versions.Count-1 do
+  begin
+    lVer := TIDSConnectHelper.VersionFromStr(_Versions[i]);
+    if (lVer >= idsConnectVersion_2_5) and (lVer > Result) then
+      Result := lVer;
   end;
 end;
 
@@ -2253,7 +2360,7 @@ begin
       if Length(_Raw) > 0 then
         str.ReadBuffer(_Raw[0],Length(_Raw));
       if Assigned(IDSCONNECT_ONRESPONSE) then
-        IDSCONNECT_ONRESPONSE(_Url,res.StatusCode,_Raw);
+        NotifyResponse(_Url,res.StatusCode,_Raw);
       if res.StatusCode <> 200 then
       begin
         if res.StatusCode <> 404 then
@@ -2646,6 +2753,7 @@ begin
     ReportError('ADL: Die Artikelnummer fehlt.',nil);
     exit;
   end;
+  CheckHttps('ADL','Die Shop-Adresse',_ServiceURL);
   hstrl := TStringList.Create;
   try
     hstrl.Add('<!doctype html>');
@@ -2697,6 +2805,9 @@ begin
     ReportError('AS: Es ist kein Warenkorb für das Ergebnis übergeben.',nil);
     exit;
   end;
+  CheckHttps('AS','Die Shop-Adresse',_ServiceURL);
+  if not CheckHttps('AS','Die Hook-URL',IDSCONNECT_HOOKURL,IDSCONNECT_REQUIRE_HTTPS_HOOK) then
+    exit;
 
   if _Version < idsConnectVersion_2_5_1 then
     _MultipleResult := false;
@@ -2754,6 +2865,9 @@ begin
     ReportError('WKE: Es ist kein Warenkorb für das Ergebnis übergeben.',nil);
     exit;
   end;
+  CheckHttps('WKE','Die Shop-Adresse',_ServiceURL);
+  if not CheckHttps('WKE','Die Hook-URL',IDSCONNECT_HOOKURL,IDSCONNECT_REQUIRE_HTTPS_HOOK) then
+    exit;
 
   sid := TIDSConnect.GetUuid;
   hstrl := TStringList.Create;
@@ -2811,6 +2925,9 @@ begin
     ReportError('WKS: Es ist kein Warenkorb übergeben.',nil);
     exit;
   end;
+  CheckHttps('WKS','Die Shop-Adresse',_ServiceURL);
+  if not CheckHttps('WKS','Die Hook-URL',IDSCONNECT_HOOKURL,IDSCONNECT_REQUIRE_HTTPS_HOOK) then
+    exit;
 
   sid := TIDSConnect.GetUuid;
   hstr := TStringBuilder.Create;
