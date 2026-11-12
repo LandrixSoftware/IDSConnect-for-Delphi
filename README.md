@@ -191,6 +191,27 @@ Server, den man selbst kontrolliert. Das Skript legt jede Übertragung als eigen
 Datei in eine Warteschlange je Sitzung; jeder Abruf liefert die älteste und
 löscht sie. Ein eigener Hook-Server muss sich genauso verhalten.
 
+Zum Betrieb von `idsconnect.php`:
+
+* **Ablage:** im Ordner `idsconnect-data` neben dem Ordner des Skripts. Liegt
+  das Skript direkt im Webroot, ist das außerhalb; liegt es tiefer (z. B.
+  `/var/www/html/hooks/`), ist der Ordner noch im Webroot – dann
+  `IDSCONNECT_DIR` (Umgebungsvariable, Apache: `SetEnv`) auf einen Ordner
+  außerhalb setzen. Lässt sich der Ordner nicht anlegen (z. B. wegen
+  `open_basedir`), weicht das Skript auf `idsconnect` im Skriptordner aus.
+  In jeden Ablageordner legt es eine `.htaccess` (Zugriff verboten) und eine
+  leere `index.html`; gelingt das nicht, nimmt es nichts an (HTTP 500). Die
+  `.htaccess` wirkt nur bei Apache mit `AllowOverride`; bei nginx oder
+  `AllowOverride None` den Ordner in der Serverkonfiguration sperren.
+  Abgelegt wird nur per POST, als `.dat`-Datei.
+* **Platz:** höchstens 4 MB je Übertragung und 64 MB insgesamt (Umgebungsvariable
+  `IDSCONNECT_MAX_TOTAL` in Byte), jede Datei zählt mindestens 4 KB; darüber
+  antwortet das Skript mit HTTP 507. Nicht abgeholte Übertragungen verfallen
+  nach einer Stunde.
+* **Auslieferung:** mit `X-Content-Type-Options: nosniff`,
+  `Content-Security-Policy: sandbox` und `Cache-Control: no-store`, damit ein
+  untergeschobener Inhalt im Browser kein Skript ausführt.
+
 Nach dem Absenden zeigt die Unit einen Warte-Dialog und fragt die Hook-URL im
 Abstand von zwei Sekunden ab, bis die Rückübertragung eintrifft, der Anwender
 abbricht oder das Zeitlimit abläuft. Der Abruf läuft im Hintergrund, der
