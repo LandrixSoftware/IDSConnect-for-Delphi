@@ -302,7 +302,11 @@ begin
   //Die Datei enthaelt Kundennummer, Benutzername und Passwort im Klartext.
   //Sie gehoert deshalb nicht neben die EXE (dort schlaegt das Schreiben unter
   //C:\Program Files ausserdem fehl), sondern in das Benutzer-Temp-Verzeichnis.
-  Result := TPath.Combine(TPath.GetTempPath,'idsconnect.html');
+  //Ein eindeutiger Name je Aufruf: Mit dem frueheren festen Namen
+  //ueberschrieben sich parallele Instanzen gegenseitig. Die Unit loescht die
+  //Datei nach Gebrauch (IDSCONNECT_TMPFILE_DELETE_DELAY).
+  Result := TPath.Combine(TPath.GetTempPath,
+              'idsconnect-'+TGUID.NewGuid.ToString.Trim(['{','}'])+'.html');
 end;
 
 function TMainForm.UseMultipleResult: Boolean;

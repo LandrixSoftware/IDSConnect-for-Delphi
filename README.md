@@ -138,7 +138,8 @@ nach der ersten Übertragung: Es kehrt in den Shop zurück, die Titelzeile zähl
 die übernommenen Rückgaben mit, und der Anwender schließt das Fenster, wenn er
 fertig ist. Abgeholt wird schon während der Sitzung — nach jeder Übertragung
 und zusätzlich jede Minute —, damit bei langen Sitzungen nichts auf dem Server
-verfällt.
+verfällt. Das Abholen läuft im Hintergrund; der Browser bleibt auch bei einem
+langsamen Hook-Server bedienbar.
 
 Der Hook-Server muss jede Rückgabe **beim Abruf verbrauchen** und mehrere
 Rückgaben derselben Sitzung in einer Warteschlange halten — so arbeitet das
@@ -248,7 +249,11 @@ Gemeldet werden außerdem:
 * eine Shop- oder Hook-Adresse mit `http://` statt `https://` (außer
   `localhost`). Mit `TIDSConnect.IDSCONNECT_REQUIRE_HTTPS_HOOK := True` bricht
   ein Aufruf mit unverschlüsselter Hook-URL zusätzlich ab;
-* beim Senden als 2.5.1 Felder, die es dort nicht mehr gibt (siehe oben).
+* beim Senden als 2.5.1 Felder, die es dort nicht mehr gibt (siehe oben);
+* ein integrierter Browser, der nicht starten oder den Inhalt nicht laden
+  konnte. Es wurde dann nichts gesendet; die Funktionen liefern `False`,
+  auch `IDSConnectWKS` mit `_DontWait`. `IDSConnectADT` ist eine Prozedur,
+  dort zeigt nur diese Meldung den Fehler an.
 
 Scheitert das Einlesen einer Rückgabe, bleibt der übergebene Warenkorb
 unverändert – bei WKS also der gesendete Warenkorb.
@@ -272,7 +277,13 @@ Browser (`TEdgeBrowser`, benötigt die WebView2-Runtime). Gesteuert wird das üb
 den Parameter `_TmpFilename`:
 
 * **gesetzt** — das Formular wird in diese Datei geschrieben und im
-  Standardbrowser geöffnet
+  Standardbrowser geöffnet. Die Datei enthält die Zugangsdaten im Klartext;
+  die Unit löscht sie deshalb nach dem Warten auf die Rückgabe, ohne Warten
+  (ADL, WKS mit `_DontWait`) nach `IDSCONNECT_TMPFILE_DELETE_DELAY` Sekunden
+  (Voreinstellung 60), spätestens beim Programmende. Ist die Datei gerade
+  gesperrt, wird das Löschen wiederholt. Für jeden Aufruf einen
+  eigenen Namen wählen, z. B. mit einer GUID wie im Beispielprojekt – zwei
+  Instanzen mit demselben Namen überschreiben sich gegenseitig
 * **leer** — das Formular wird direkt im integrierten Browser angezeigt; es
   entsteht keine Datei mit Zugangsdaten auf der Platte. Ausnahme: Ein
   Formular über rund 1,5 MB (sehr großer WKS-Warenkorb) überschreitet die
@@ -285,17 +296,25 @@ und schließt sich; der Warenkorb wird danach abgeholt. Beim Standardbrowser
 
 ### Profil- und Cache-Ordner
 
-Wenn beim `ShowDialog` kein Pfad übergeben wird, verwendet `TEdgeBrowser`
-für Profil, Cookies und Cache den Unterordner **WebView2 neben der EXE**:
+Profil, Cookies und Cache des integrierten Browsers liegen pro
+Windows-Benutzer unter
 
 ```
-<EXE-Verzeichnis>\WebView2
+%LOCALAPPDATA%\<EXE-Name>\IDSConnect.WebView2
 ```
 
-Der Ordner wird bei Bedarf angelegt und muss beschreibbar sein. Er ist dauerhaft und kein
+Der Ordner wird bei Bedarf angelegt. Er ist dauerhaft und kein
 Temp-Verzeichnis: WebView2 legt dort die Anmeldesitzung ab, sonst müsste sich
-der Anwender bei jedem Aufruf neu am Shop anmelden. Ein eigener Pfad lässt sich
-weiterhin übergeben.
+der Anwender bei jedem Aufruf neu am Shop anmelden. Einen anderen Ordner setzt
+
+```pascal
+TIDSConnect.IDSCONNECT_WEBVIEW_USERDATAFOLDER := 'D:\Daten\WebView2';
+```
+
+Früher lag das Profil im Unterordner `WebView2` neben der EXE – unter
+`C:\Program Files` nicht beschreibbar, und auf einem Terminalserver teilten sich
+alle Benutzer dieselbe Shop-Anmeldung. Nach dem Update meldet sich der
+Anwender einmal neu am Shop an; der alte Ordner kann gelöscht werden.
 
 ## Beispielprojekt
 

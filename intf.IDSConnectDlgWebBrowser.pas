@@ -45,18 +45,37 @@ type
     //Uebertragung und regelmaessig ueber collectTimer aufgerufen
     onTransfer : TFunc<Integer>;
     collectTimer : TTimer;
+    //Ein Abruf laeuft im Hintergrund
     collecting : Boolean;
+    //Waehrend eines laufenden Abrufs wurde ein weiterer angefordert
+    collectPending : Boolean;
+    //Der Dialog wird geschlossen: keinen neuen Abruf mehr starten
+    closing : Boolean;
     function LoadContent : Boolean;
     procedure ReturnToShop;
     procedure Collect;
+    procedure CollectDone(_Count : Integer);
     procedure UpdateCaption;
     procedure DoCollectTimer(Sender : TObject);
     procedure WMIDSConnectCollect(var Msg : TMessage); message WM_IDSCONNECT_COLLECT;
   public
+    //Voreinstellung fuer Profil, Cookies und Cache:
+    //%LOCALAPPDATA%\<EXE-Name>\IDSConnect.WebView2. Frueher lag das Profil
+    //neben der EXE - unter Program Files nicht beschreibbar, und auf einem
+    //Terminalserver teilten sich alle Benutzer dieselbe Shop-Sitzung.
+    class function DefaultCachePath : String;
     //Liefert den Ordner, in dem WebView2 Profil, Cookies und Cache ablegt.
-    //Ist _CachePath leer, wird der Unterordner WebView2 neben der EXE
-    //verwendet und bei Bedarf angelegt.
+    //Ist _CachePath leer, wird DefaultCachePath verwendet; der Ordner wird
+    //bei Bedarf angelegt.
     class function ResolveCachePath(const _CachePath : String) : String;
+    //Wie ShowDialog, liefert aber das ModalResult: mrAbort, wenn der Browser
+    //nicht starten oder den Inhalt nicht laden konnte (dann wurde nichts
+    //gesendet), mrOK nach der Rueckuebertragung bzw. bei Mehrfachrueckgabe
+    //nach mindestens einer, sonst mrCancel (Fenster geschlossen).
+    class function Execute(const _IDSHTMLValue,_CachePath : String;
+                           const _ReturnUrlPrefix : String = '';
+                           _MultipleResult : Boolean = false;
+                           _OnTransfer : TFunc<Integer> = nil) : TModalResult;
     //_MultipleResult: nach einer Navigation zur Ruecksprungadresse offen
     //bleiben; der Anwender schliesst das Fenster selbst, wenn er fertig ist.
     //_OnTransfer (nur mit _MultipleResult): holt die Rueckgaben schon
@@ -68,6 +87,9 @@ type
   end;
 
 implementation
+
+uses
+  System.Threading;
 
 {$R *.dfm}
 
@@ -153,18 +175,53 @@ begin
 end;
 
 procedure TIDSConnectDlgWebBrowser.Collect;
+var
+  lTransfer : TFunc<Integer>;
 begin
-  //Der Abruf laeuft synchron; ein Timer-Ereignis waehrenddessen darf ihn
-  //nicht erneut anstossen
-  if collecting or (not Assigned(onTransfer)) then
+  if closing or (not Assigned(onTransfer)) then
     exit;
-  collecting := true;
-  try
-    received := onTransfer();
-    UpdateCaption;
-  finally
-    collecting := false;
+  //Laeuft schon ein Abruf, kann die neue Uebertragung nach dessen Anfrage
+  //eingetroffen sein - deshalb im Anschluss noch einmal abholen
+  if collecting then
+  begin
+    collectPending := true;
+    exit;
   end;
+  //Frueher lief der Abruf synchron im Hauptthread: bei einem langsamen oder
+  //nicht erreichbaren Hook-Server stand der Browser bis zum HTTP-Timeout
+  collecting := true;
+  collectPending := false;
+  lTransfer := onTransfer;
+  TTask.Run(
+    procedure
+    var
+      lCount : Integer;
+    begin
+      try
+        lCount := lTransfer();
+      except
+        //Die Abruffunktionen fangen ihre Fehler selbst ab; eine dennoch
+        //durchgereichte Exception darf den Dialog nicht blockieren
+        lCount := -1;
+      end;
+      TThread.Queue(nil,
+        procedure
+        begin
+          CollectDone(lCount);
+        end);
+    end);
+end;
+
+procedure TIDSConnectDlgWebBrowser.CollectDone(_Count: Integer);
+begin
+  collecting := false;
+  if _Count >= 0 then
+  begin
+    received := _Count;
+    UpdateCaption;
+  end;
+  if collectPending and (not closing) then
+    Collect;
 end;
 
 procedure TIDSConnectDlgWebBrowser.DoCollectTimer(Sender: TObject);
@@ -259,14 +316,25 @@ begin
   end;
 end;
 
+class function TIDSConnectDlgWebBrowser.DefaultCachePath: String;
+var
+  lBase : String;
+begin
+  lBase := GetEnvironmentVariable('LOCALAPPDATA');
+  if lBase = '' then
+    lBase := TPath.GetHomePath;
+  Result := TPath.Combine(TPath.Combine(lBase,ChangeFileExt(ExtractFileName(ParamStr(0)),'')),
+                          'IDSConnect.WebView2');
+end;
+
 class function TIDSConnectDlgWebBrowser.ResolveCachePath(const _CachePath: String): String;
 begin
   Result := _CachePath;
 
-  //Profil, Cookies und Cache dauerhaft im Unterordner neben der EXE ablegen.
-  //Der Pfad ist unabhaengig vom aktuellen Arbeitsverzeichnis.
+  //Profil, Cookies und Cache dauerhaft ablegen - unabhaengig vom aktuellen
+  //Arbeitsverzeichnis und pro Windows-Benutzer
   if Result = '' then
-    Result := TPath.Combine(ExtractFilePath(Application.ExeName),'WebView2');
+    Result := DefaultCachePath;
 
   if not TDirectory.Exists(Result) then
   try
@@ -282,6 +350,13 @@ end;
 class function TIDSConnectDlgWebBrowser.ShowDialog(const _IDSHTMLValue,_CachePath : String;
   const _ReturnUrlPrefix : String; _MultipleResult : Boolean;
   _OnTransfer : TFunc<Integer>): Boolean;
+begin
+  Result := Execute(_IDSHTMLValue,_CachePath,_ReturnUrlPrefix,_MultipleResult,_OnTransfer) = mrOK;
+end;
+
+class function TIDSConnectDlgWebBrowser.Execute(const _IDSHTMLValue,_CachePath : String;
+  const _ReturnUrlPrefix : String; _MultipleResult : Boolean;
+  _OnTransfer : TFunc<Integer>): TModalResult;
 var
   lDlg : TIDSConnectDlgWebBrowser;
   lContentFile : String;
@@ -324,13 +399,22 @@ begin
       lDlg.collectTimer.OnTimer := lDlg.DoCollectTimer;
       lDlg.collectTimer.Enabled := true;
     end;
-    Result := lDlg.ShowModal = mrOK;
-    if Assigned(lDlg.collectTimer) then
-      lDlg.collectTimer.Enabled := false;
+    try
+      Result := lDlg.ShowModal;
+    finally
+      //Ein laufender Abruf greift noch auf den Dialog und den Warenkorb zu -
+      //auf sein Ende warten (auch bei Application.Terminate) und dabei seine
+      //Synchronize-/Queue-Aufrufe abarbeiten
+      lDlg.closing := true;
+      if Assigned(lDlg.collectTimer) then
+        lDlg.collectTimer.Enabled := false;
+      while lDlg.collecting do
+        CheckSynchronize(50);
+    end;
     //Bei Mehrfachrueckgabe schliesst der Anwender das Fenster selbst; der
     //Vorgang war erfolgreich, sobald mindestens eine Uebertragung erfolgte
-    if _MultipleResult and (lDlg.received > 0) then
-      Result := true;
+    if _MultipleResult and (lDlg.received > 0) and (Result <> mrAbort) then
+      Result := mrOK;
   finally
     //Die Lebensdauer gehoert eindeutig hierher. Das fruehere Action := caFree
     //im OnClose hat zusaetzlich Release gepostet - zusammen mit diesem Free

@@ -4,7 +4,7 @@ program IDSConnectDiagnosticsTests;
 
 uses
   System.SysUtils, System.Classes, System.IOUtils, Winapi.ActiveX,
-  intf.IDSConnect, intf.IDSConnectTypes;
+  intf.IDSConnect, intf.IDSConnectTypes, intf.IDSConnectDlgWebBrowser;
 
 procedure Check(Value: Boolean; const Message: String);
 begin
@@ -133,7 +133,9 @@ var
   LastError: String;
   RolReports: Integer;
   OffMainThread, Done: Boolean;
-  AllErrors: String;
+  AllErrors, TmpA, TmpB, OldDir: String;
+  Waited: Integer;
+  Lock: TFileStream;
   Worker: TThread;
 begin
   BaseUrl := ParamStr(1);
@@ -405,6 +407,74 @@ begin
     TIDSConnect.IDSCONNECT_REQUIRE_HTTPS_HOOK := false;
     TIDSConnect.IDSCONNECT_HOOKURL := BaseUrl+'/callback';
 
+    //Form file with credentials: deleted at once or after the delay
+    TmpA := TPath.Combine(TPath.GetTempPath,'idsconnect-test-'+TGUID.NewGuid.ToString+'.html');
+    TFile.WriteAllText(TmpA,'x');
+    TIDSConnect.DeleteTmpFileLater(TmpA,0);
+    Check(not TFile.Exists(TmpA),'tmp file not deleted immediately');
+    TFile.WriteAllText(TmpA,'x');
+    TIDSConnect.DeleteTmpFileLater(TmpA,1);
+    Check(TFile.Exists(TmpA),'tmp file deleted before the delay');
+    Waited := 0;
+    while TFile.Exists(TmpA) and (Waited < 50) do
+    begin
+      Sleep(100);
+      Inc(Waited);
+    end;
+    Check(not TFile.Exists(TmpA),'tmp file not deleted after the delay');
+    //Same name scheduled twice: only the later deadline deletes it
+    TFile.WriteAllText(TmpA,'x');
+    TIDSConnect.DeleteTmpFileLater(TmpA,1);
+    TIDSConnect.DeleteTmpFileLater(TmpA,3);
+    Sleep(2000);
+    Check(TFile.Exists(TmpA),'reused tmp file deleted by the earlier deadline');
+    //Locked file: deletion is retried after the lock is released
+    TmpB := TPath.Combine(TPath.GetTempPath,'idsconnect-test-'+TGUID.NewGuid.ToString+'.html');
+    TFile.WriteAllText(TmpB,'x');
+    Lock := TFileStream.Create(TmpB,fmOpenRead or fmShareDenyNone);
+    try
+      TIDSConnect.DeleteTmpFileLater(TmpB,1);
+      Sleep(1800);
+      Check(TFile.Exists(TmpB),'locked tmp file vanished - lock not effective, test meaningless');
+    finally
+      Lock.Free;
+    end;
+    //Windows: DeleteFile on a file opened with FILE_SHARE_DELETE missing fails
+    Waited := 0;
+    while TFile.Exists(TmpB) and (Waited < 100) do
+    begin
+      Sleep(100);
+      Inc(Waited);
+    end;
+    Check(not TFile.Exists(TmpB),'locked tmp file not deleted after the lock was released');
+    //Relative name: resolved when scheduled, not when deleted
+    TmpB := 'idsconnect-test-'+TGUID.NewGuid.ToString+'.html';
+    OldDir := GetCurrentDir;
+    SetCurrentDir(TPath.GetTempPath);
+    try
+      TFile.WriteAllText(TmpB,'x');
+      TIDSConnect.DeleteTmpFileLater(TmpB,1);
+    finally
+      SetCurrentDir(OldDir);
+    end;
+    Waited := 0;
+    while TFile.Exists(TPath.Combine(TPath.GetTempPath,TmpB)) and (Waited < 50) do
+    begin
+      Sleep(100);
+      Inc(Waited);
+    end;
+    Check(not TFile.Exists(TPath.Combine(TPath.GetTempPath,TmpB)),'relative tmp file not deleted');
+    //Pending at program end: deleted in finalization (not checked here)
+    Check(TIDSConnect.IDSCONNECT_TMPFILE_DELETE_DELAY = 60,'default delete delay');
+
+    //WebView2 profile per Windows user, not next to the EXE
+    Check(SameText(TIDSConnectDlgWebBrowser.DefaultCachePath,
+            TPath.Combine(TPath.Combine(GetEnvironmentVariable('LOCALAPPDATA'),'IDSConnectDiagnosticsTests'),
+                          'IDSConnect.WebView2')),
+          'unexpected default WebView2 folder: '+TIDSConnectDlgWebBrowser.DefaultCachePath);
+    Check(TIDSConnect.IDSCONNECT_WEBVIEW_USERDATAFOLDER = '','default user data folder not empty');
+
+    Writeln('PASS: tmp form file deleted, WebView2 profile per user');
     Writeln('PASS: kept cart on failed fetch, unknown codes, missing input reported, empty credentials allowed');
     Writeln('PASS: response diagnostics, masked WKE request, selected and default versions for WKE/SV/LI, multiple-return queue/header/duplicates');
   finally

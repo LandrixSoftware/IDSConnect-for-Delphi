@@ -20,7 +20,7 @@ unit intf.IDSConnect;
 interface
 
 uses
-  System.SysUtils, System.Classes, System.Net.URLClient, LandrixXmlDom,
+  System.SysUtils, System.Classes, System.UITypes, System.Net.URLClient, LandrixXmlDom,
   intf.IDSConnectTypes;
 
 type
@@ -60,6 +60,16 @@ type
     //mit einer http-Hook-URL zusaetzlich abgebrochen - ueber die Hook-URL
     //laufen Warenkorb, Preise und Kundendaten.
     IDSCONNECT_REQUIRE_HTTPS_HOOK : Boolean;
+    //Ordner fuer Profil, Cookies und Cache des integrierten Browsers.
+    //Leer (Voreinstellung): %LOCALAPPDATA%\<EXE-Name>\IDSConnect.WebView2 -
+    //pro Windows-Benutzer, auch auf Terminalservern und unter Program Files.
+    IDSCONNECT_WEBVIEW_USERDATAFOLDER : String;
+    //Die Formulardatei fuer den Standardbrowser (_TmpFilename) enthaelt die
+    //Zugangsdaten im Klartext und wird deshalb geloescht: nach dem Warten auf
+    //die Rueckgabe sofort, ohne Warten (ADL, WKS mit _DontWait) nach dieser
+    //Anzahl Sekunden - der Browser muss sie bis dahin geladen haben.
+    //Spaetestens beim Beenden des Programms. Voreinstellung 60.
+    IDSCONNECT_TMPFILE_DELETE_DELAY : Integer;
   public const
     //Hoechstzahl der Abrufe in einem Durchgang von CollectResults - schuetzt
     //vor einer Endlosschleife, falls ein Hook-Server die Rueckgabe beim Abruf
@@ -130,6 +140,9 @@ type
                                     _Warenkorb : TIDSConnect_Warenkorb; _TimeoutSec : Integer;
                                     _MultipleResult : Boolean = false) : Boolean;
   public
+    //Loescht eine Datei nach _DelaySec Sekunden in einem Hintergrund-Thread
+    //(0 oder kleiner: sofort); noch ausstehende Dateien beim Programmende
+    class procedure DeleteTmpFileLater(const _Filename : String; _DelaySec : Integer);
     //Ein einzelner Abruf der vollstaendigen Hook-URL inklusive sid, auch fuer
     //eigene Diagnose-/Polling-Oberflaechen. 404 oder leer: false, kein Fehler.
     //HTTP-/Parserfehler: false und Fehlertext. Rohe Antwort ueber ONRESPONSE.
@@ -255,7 +268,8 @@ implementation
 
 uses
   System.Math, System.DateUtils, System.StrUtils, Winapi.ShellAPI,
-  Winapi.Windows, System.Net.HttpClient, System.Net.Mime,
+  Winapi.Windows, System.Net.HttpClient, System.Net.Mime, System.SyncObjs,
+  System.Generics.Collections,
   intf.IDSConnectDlgWebBrowser, intf.IDSConnectDlgWait;
 
 const
@@ -2675,11 +2689,174 @@ begin
     ReportError('Der Browser konnte nicht gestartet werden ('+_TmpFilename+').',nil);
 end;
 
+type
+  //Loescht vorgemerkte Formulardateien, wenn ihre Frist ablaeuft. Ein
+  //einziger Thread, der in finalization beendet und abgewartet wird -
+  //selbstfreigebende Threads je Datei konnten nach der Finalisierung der RTL
+  //aufwachen. Schlaegt das Loeschen fehl (Datei von einem anderen Prozess
+  //geoeffnet), bleibt der Eintrag stehen und wird erneut versucht.
+  TTmpFileCleaner = class(TThread)
+  private type
+    TEntry = record
+      Filename : String;
+      Due : UInt64;
+    end;
+  private
+    FLock : TCriticalSection;
+    FEntries : TList<TEntry>;
+    FWake : TEvent;
+  protected
+    procedure Execute; override;
+  public
+    constructor Create;
+    destructor Destroy; override;
+    procedure Add(const _Filename : String; _DelayMs : UInt64);
+    //Loescht faellige (_All: alle) Dateien; nicht loeschbare bleiben vorgemerkt
+    procedure Process(_All : Boolean);
+  end;
+
+const
+  //Abstand fuer einen erneuten Versuch, wenn das Loeschen scheiterte
+  TmpFileRetryMs = 5000;
+
+var
+  GTmpFileCleaner : TTmpFileCleaner;
+
+//true, wenn die Datei geloescht wurde oder nachweislich nicht (mehr) da ist.
+//FileExists genuegt dafuer nicht: es liefert auch bei verweigertem Zugriff
+//oder einer kurz nicht erreichbaren Freigabe false - der Eintrag waere dann
+//verworfen worden und die Datei mit den Zugangsdaten liegen geblieben.
+function TryDeleteTmpFile(const _Filename : String) : Boolean;
+var
+  lErr : DWORD;
+begin
+  if Winapi.Windows.DeleteFile(PChar(_Filename)) then
+    exit(true);
+  lErr := GetLastError;
+  Result := (lErr = ERROR_FILE_NOT_FOUND) or (lErr = ERROR_PATH_NOT_FOUND);
+end;
+
+constructor TTmpFileCleaner.Create;
+begin
+  FLock := TCriticalSection.Create;
+  FEntries := TList<TEntry>.Create;
+  FWake := TEvent.Create(nil,false,false,'');
+  inherited Create(false);
+end;
+
+destructor TTmpFileCleaner.Destroy;
+begin
+  Terminate;
+  FWake.SetEvent;
+  //inherited wartet auf das Ende von Execute
+  inherited;
+  FWake.Free;
+  FEntries.Free;
+  FLock.Free;
+end;
+
+procedure TTmpFileCleaner.Add(const _Filename: String; _DelayMs: UInt64);
+var
+  i : Integer;
+  lEntry : TEntry;
+  lDue : UInt64;
+begin
+  lDue := GetTickCount64+_DelayMs;
+  FLock.Enter;
+  try
+    //Derselbe Name erneut vorgemerkt (fester Dateiname): die spaetere Frist
+    //gilt, sonst loeschte die fruehere die Datei des spaeteren Aufrufs
+    for i := 0 to FEntries.Count-1 do
+      if SameText(FEntries[i].Filename,_Filename) then
+      begin
+        lEntry := FEntries[i];
+        if lDue > lEntry.Due then
+          lEntry.Due := lDue;
+        FEntries[i] := lEntry;
+        exit;
+      end;
+    lEntry.Filename := _Filename;
+    lEntry.Due := lDue;
+    FEntries.Add(lEntry);
+  finally
+    FLock.Leave;
+  end;
+end;
+
+procedure TTmpFileCleaner.Process(_All: Boolean);
+var
+  i : Integer;
+  lEntry : TEntry;
+  lNow : UInt64;
+begin
+  lNow := GetTickCount64;
+  FLock.Enter;
+  try
+    for i := FEntries.Count-1 downto 0 do
+    begin
+      lEntry := FEntries[i];
+      if (not _All) and (lEntry.Due > lNow) then
+        continue;
+      if TryDeleteTmpFile(lEntry.Filename) then
+        FEntries.Delete(i)
+      else
+      begin
+        lEntry.Due := lNow+TmpFileRetryMs;
+        FEntries[i] := lEntry;
+      end;
+    end;
+  finally
+    FLock.Leave;
+  end;
+end;
+
+procedure TTmpFileCleaner.Execute;
+begin
+  while not Terminated do
+  begin
+    FWake.WaitFor(250);
+    if not Terminated then
+      Process(false);
+  end;
+end;
+
+class procedure TIDSConnect.DeleteTmpFileLater(const _Filename: String;
+  _DelaySec: Integer);
+var
+  lFilename : String;
+begin
+  if _Filename = '' then
+    exit;
+  //Absoluter Pfad: ein relativer Name zeigte nach einem Wechsel des
+  //Arbeitsverzeichnisses waehrend der Frist auf eine andere Datei
+  lFilename := ExpandFileName(_Filename);
+  if _DelaySec <= 0 then
+  begin
+    if TryDeleteTmpFile(lFilename) then
+      exit;
+    ReportError('Die temporaere Datei '+lFilename+' mit den Zugangsdaten konnte nicht '+
+                'geloescht werden; das Loeschen wird wiederholt.',nil);
+    _DelaySec := 0;
+  end;
+  if GTmpFileCleaner = nil then
+  begin
+    //Hier ist nur der Hauptthread unterwegs (Formular-Aufrufe); nach der
+    //Finalisierung wird nichts mehr vorgemerkt
+    GTmpFileCleaner := TTmpFileCleaner.Create;
+  end;
+  if _DelaySec > 0 then
+    GTmpFileCleaner.Add(lFilename,UInt64(_DelaySec)*1000)
+  else
+    GTmpFileCleaner.Add(lFilename,TmpFileRetryMs);
+end;
+
 class function TIDSConnect.ShowFormAndFetch(_Form: TStrings; const _TmpFilename,
   _ResultUrl: String; _Warenkorb: TIDSConnect_Warenkorb;
   _TimeoutSec: Integer; _MultipleResult: Boolean): Boolean;
 var
   lState : TCollectState;
+  lModal : TModalResult;
+  lTmp : String;
 begin
   Result := false;
 
@@ -2693,18 +2870,32 @@ begin
     //Rueckgaben werden schon waehrend der Sitzung abgeholt (nach jeder
     //Uebertragung und regelmaessig) - sonst verfielen sie bei einer langen
     //Sitzung nach der TTL des Hook-Servers.
+    //Das Abholen waehrend der Sitzung laeuft im Hintergrund (CollectAll
+    //meldet Fehler und Antworten synchronisiert im Hauptthread); der Dialog
+    //wartet vor seiner Freigabe auf das Ende eines laufenden Abrufs.
     lState := Default(TCollectState);
     if _MultipleResult and (_ResultUrl <> '') then
     begin
       _Warenkorb.Clear;
-      TIDSConnectDlgWebBrowser.ShowDialog(_Form.Text,'',HookUrlBase,true,
+      lModal := TIDSConnectDlgWebBrowser.Execute(_Form.Text,IDSCONNECT_WEBVIEW_USERDATAFOLDER,
+        HookUrlBase,true,
         function : Integer
         begin
           CollectAll(_ResultUrl,_Warenkorb,lState);
           Result := lState.Received;
         end);
     end else
-      TIDSConnectDlgWebBrowser.ShowDialog(_Form.Text,'',HookUrlBase);
+      lModal := TIDSConnectDlgWebBrowser.Execute(_Form.Text,IDSCONNECT_WEBVIEW_USERDATAFOLDER,
+        HookUrlBase);
+    //Konnte der Browser nicht starten oder den Inhalt nicht laden, wurde
+    //nichts gesendet. Frueher meldete ADL bzw. WKS mit _DontWait trotzdem
+    //Erfolg.
+    if lModal = mrAbort then
+    begin
+      ReportError('Der integrierte Browser konnte nicht gestartet werden oder den Inhalt '+
+                  'nicht laden; es wurde nichts an den Shop gesendet.',nil);
+      exit;
+    end;
     if _ResultUrl = '' then
     begin
       Result := true;
@@ -2723,15 +2914,31 @@ begin
     exit;
   end;
 
-  //Externer Browser ueber eine temporaere Datei
-  if not SaveFormToFile(_Form,_TmpFilename) then
+  //Externer Browser ueber eine temporaere Datei. Sie enthaelt die
+  //Zugangsdaten im Klartext und blieb frueher dauerhaft liegen. Ein
+  //relativer Name wird einmal aufgeloest; Schreiben, Oeffnen und Loeschen
+  //verwenden denselben absoluten Pfad.
+  lTmp := ExpandFileName(_TmpFilename);
+  if not SaveFormToFile(_Form,lTmp) then
     exit;
-  if not OpenInBrowser(_TmpFilename) then
+  if not OpenInBrowser(lTmp) then
+  begin
+    DeleteTmpFileLater(lTmp,0);
     exit;
+  end;
   if _ResultUrl = '' then
-    Result := true
-  else
+  begin
+    //Der Browser liest die Datei erst nach seinem Start
+    DeleteTmpFileLater(lTmp,IDSCONNECT_TMPFILE_DELETE_DELAY);
+    Result := true;
+    exit;
+  end;
+  try
     Result := WaitForResult(_ResultUrl,_Warenkorb,_TimeoutSec,_MultipleResult);
+  finally
+    //Bis hierher hat der Browser das Formular laengst abgeschickt
+    DeleteTmpFileLater(lTmp,0);
+  end;
 end;
 
 class procedure TIDSConnect.IDSConnectADT(const _ServiceURL, _Cst, _UN, _Pwd,
@@ -2996,5 +3203,19 @@ initialization
   //30 Sekunden verwarf Rueckgaben, die der Shop innerhalb der zugesagten
   //Frist noch sandte.
   TIDSConnect.IDSCONNECT_MULTIPLERESULT_FOLLOWUP := 0;
+  TIDSConnect.IDSCONNECT_TMPFILE_DELETE_DELAY := 60;
+
+finalization
+  //Noch ausstehende Formulardateien jetzt loeschen; der Browser hat sie
+  //bei einem regulaeren Programmende laengst geladen. Der Thread wird vorher
+  //beendet und abgewartet, solange die RTL noch vollstaendig ist.
+  if GTmpFileCleaner <> nil then
+  begin
+    GTmpFileCleaner.Terminate;
+    GTmpFileCleaner.FWake.SetEvent;
+    GTmpFileCleaner.WaitFor;
+    GTmpFileCleaner.Process(true);
+    FreeAndNil(GTmpFileCleaner);
+  end;
 
 end.
