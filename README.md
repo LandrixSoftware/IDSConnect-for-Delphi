@@ -77,9 +77,29 @@ TIDSConnect.IDSConnectAS(URL,Kundennr,Benutzer,Passwort,TempDatei,Suchbegriff,
 
 Mit `multipleResult = True` darf der Shop mehrfach an die Hook-URL senden. Der
 Warte-Dialog bleibt dann offen und übernimmt jede eintreffende Rückgabe: deren
-Positionen werden an `lWarenkorb` **angehängt**, die Kopfdaten stammen aus der
-ersten Rückgabe. Der Dialog zeigt laufend die Anzahl der übernommenen Rückgaben;
-beendet wird der Vorgang über „Fertig" oder durch Ablauf der Frist.
+Positionen werden an `lWarenkorb` **angehängt**, die Kopfdaten (Währung,
+Kommission, Referenzen, Lieferanten-, Kunden- und Lieferortdaten) stammen aus
+der ersten Rückgabe. Der Dialog zeigt laufend die Anzahl der übernommenen
+Rückgaben; beendet wird der Vorgang über „Fertig" oder durch Ablauf der Frist.
+Was bis zum Schließen noch eingetroffen ist, wird danach ein letztes Mal
+abgeholt.
+
+Im integrierten Browser schließt sich das Fenster bei Mehrfachrückgabe nicht
+nach der ersten Übertragung: Es kehrt in den Shop zurück, die Titelzeile zählt
+die übernommenen Rückgaben mit, und der Anwender schließt das Fenster, wenn er
+fertig ist. Abgeholt wird schon während der Sitzung — nach jeder Übertragung
+und zusätzlich jede Minute —, damit bei langen Sitzungen nichts auf dem Server
+verfällt.
+
+Der Hook-Server muss jede Rückgabe **beim Abruf verbrauchen** und mehrere
+Rückgaben derselben Sitzung in einer Warteschlange halten — so arbeitet das
+beiliegende [idsconnect.php](idsconnect.php). Es schickt außerdem je Rückgabe
+eine eindeutige Kennung im Header `X-IDSConnect-Id`. Liefert ein Server
+dieselbe Rückgabe erneut (gleiche Kennung), wird sie verworfen und einmalig
+über `IDSCONNECT_ONERROR` gemeldet. Inhaltsgleiche, aber eigenständige
+Übertragungen bleiben erhalten. Ein Server ohne diese Kennung wird über
+gleiche Rohdaten erkannt — dort fällt eine unmittelbar wiederholte,
+bytegleiche Übertragung weg.
 
 `hookURLTimeout` bemisst sich dabei — wie in der Spezifikation vorgesehen — ab
 der **letzten** Übertragung.
@@ -91,17 +111,21 @@ Rückgaben verarbeiten"), keine Anfrage; die Spezifikation kennt dafür weder in
 auszuprobieren und zu hinterlegen — im Beispielprojekt über den Schlüssel
 `MultipleResult` in der `configuration.ini`.
 
-Damit ein Shop, der nur einmal sendet, den Dialog nicht die volle Frist
-offenhält, wird nach der ersten Rückgabe nur noch kurz auf weitere gewartet:
+Standardmäßig wartet der Dialog nach jeder Rückgabe die volle zugesagte Frist
+auf weitere. Sendet ein Shop nur einmal, beendet der Anwender den Vorgang mit
+„Fertig". Wer den Dialog früher schließen will, kann eine kürzere Nachlauffrist
+setzen — Rückgaben, die der Shop danach noch innerhalb von `hookURLTimeout`
+sendet, gehen dann allerdings verloren:
 
 ```pascal
-//Sekunden; 0 = immer die volle Frist abwarten
-TIDSConnect.IDSCONNECT_MULTIPLERESULT_FOLLOWUP := 30;
+//Sekunden; 0 (Voreinstellung) = die volle Frist abwarten
+TIDSConnect.IDSCONNECT_MULTIPLERESULT_FOLLOWUP := 0;
 ```
 
-Wer den Ablauf selbst steuern will, kann die Rückgaben mit
-`TIDSConnect.MergeOrderItems(_Quelle,_Ziel)` zusammenführen — nötig, weil
-`LoadFromStream` den Zielwarenkorb vor dem Einlesen leert.
+Wer den Ablauf selbst steuern will, holt die aufgelaufenen Rückgaben mit
+`TIDSConnect.CollectResults` ab oder führt sie mit
+`TIDSConnect.MergeOrderItems(_Quelle,_Ziel,_MitKopfdaten)` zusammen — nötig,
+weil `LoadFromStream` den Zielwarenkorb vor dem Einlesen leert.
 
 ## Rücksprungadresse (Hook-URL)
 
@@ -113,7 +137,9 @@ TIDSConnect.IDSCONNECT_HOOKURL := 'https://<eigener-server>/idsconnect.php';
 
 Ein passendes Server-Skript liegt als [idsconnect.php](idsconnect.php) bei. Über
 diese Adresse laufen Warenkorb-, Preis- und Kundendaten — sie gehört auf einen
-Server, den man selbst kontrolliert.
+Server, den man selbst kontrolliert. Das Skript legt jede Übertragung als eigene
+Datei in eine Warteschlange je Sitzung; jeder Abruf liefert die älteste und
+löscht sie. Ein eigener Hook-Server muss sich genauso verhalten.
 
 Nach dem Absenden zeigt die Unit einen Warte-Dialog und fragt die Hook-URL im
 Abstand von zwei Sekunden ab, bis die Rückübertragung eintrifft, der Anwender
@@ -270,7 +296,10 @@ sie anschließend gelöscht.
 Lokale Regressionstests mit einem simulierten HTTP-Endpunkt lassen sich mit
 `python Tests/run_diagnostics.py` starten (Python 3 und `dcc32` im PATH).
 Sie prüfen Rückgaben, Fehlerfälle, unveränderte Bytes und die Passwortmaskierung
-ohne einen echten Shop aufzurufen.
+ohne einen echten Shop aufzurufen, dazu das Sammeln mehrerer Rückgaben samt
+Kopfdaten und den Schutz vor doppelt gelieferten Rückgaben.
+`python Tests/test_hook_php.py` (PHP im PATH) prüft die Warteschlange von
+`idsconnect.php` auf dem eingebauten PHP-Server.
 
 # Lieferanten mit IDS-Connect-Unterstützung
 

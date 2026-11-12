@@ -55,6 +55,7 @@ type
     FReceived : Integer;
     FBaseText : String;
     FFollowUpSec : Integer;
+    FGetReceived : TFunc<Integer>;
     procedure DoTimer(Sender : TObject);
     procedure DoCancel(Sender : TObject);
     procedure UpdateCaption;
@@ -71,10 +72,14 @@ type
     //auf weitere gewartet wird. Viele Shops kennen die Mehrfachrueckgabe
     //nicht - ohne diese Verkuerzung stuende der Dialog nach der einzigen
     //Rueckgabe die volle Frist offen. 0 = die volle Frist verwenden.
+    //_GetReceived liefert die tatsaechliche Anzahl uebernommener Rueckgaben,
+    //wenn ein Abruf mehrere auf einmal uebernehmen kann; ohne wird je
+    //idsPollReceived/idsPollFinished um eins gezaehlt.
     class function Execute(const _Caption,_Text : String; _TimeoutSec : Integer;
                            _OnPoll : TIDSConnectPollEvent;
                            _IntervalMS : Integer = 2000;
-                           _FollowUpSec : Integer = 0) : Boolean;
+                           _FollowUpSec : Integer = 0;
+                           _GetReceived : TFunc<Integer> = nil) : Boolean;
   end;
 
 implementation
@@ -173,7 +178,10 @@ begin
           //Weitere Rueckgaben moeglich: die Frist beginnt von vorn.
           //Nach der ersten Rueckgabe wird nur noch die - in der Regel deutlich
           //kuerzere - Nachlauffrist gewartet.
-          Inc(FReceived);
+          if Assigned(FGetReceived) then
+            FReceived := FGetReceived()
+          else
+            Inc(FReceived);
           if FFollowUpSec > 0 then
           begin
             FTimeoutSec := FFollowUpSec;
@@ -203,7 +211,8 @@ end;
 
 class function TIDSConnectDlgWait.Execute(const _Caption, _Text: String;
   _TimeoutSec: Integer; _OnPoll: TIDSConnectPollEvent;
-  _IntervalMS: Integer; _FollowUpSec : Integer): Boolean;
+  _IntervalMS: Integer; _FollowUpSec : Integer;
+  _GetReceived : TFunc<Integer>): Boolean;
 var
   lDlg : TIDSConnectDlgWait;
 begin
@@ -222,6 +231,7 @@ begin
     lDlg.FOnPoll := _OnPoll;
     lDlg.FTimeoutSec := _TimeoutSec;
     lDlg.FFollowUpSec := _FollowUpSec;
+    lDlg.FGetReceived := _GetReceived;
     if _TimeoutSec > 0 then
       lDlg.FDeadline := IncSecond(Now,_TimeoutSec)
     else

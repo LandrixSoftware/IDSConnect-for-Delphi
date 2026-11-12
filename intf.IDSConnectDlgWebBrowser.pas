@@ -8,7 +8,11 @@ uses
   Vcl.Graphics, Vcl.Controls, Vcl.Forms,
   Vcl.Dialogs, Vcl.StdCtrls, Vcl.Menus,Vcl.ExtDlgs,
   Vcl.OleCtrls, Winapi.WebView2, Winapi.ActiveX,
-  Vcl.Edge;
+  Vcl.Edge, Vcl.ExtCtrls;
+
+const
+  //Abholen nach einer Uebertragung, ausserhalb des WebView2-Ereignisses
+  WM_IDSCONNECT_COLLECT = WM_APP + 1;
 
 type
   TIDSConnectDlgWebBrowser = class(TForm)
@@ -26,13 +30,37 @@ type
     //"https://www.landrix.de" fest verdrahtet - bei jeder anderen Hook-URL
     //konnte der Dialog sich nie selbst schliessen.
     returnUrlPrefix : String;
+    //Mehrfachrueckgabe (multipleResult, ab IDS 2.5.1): der Dialog schliesst
+    //sich nach einer Uebertragung nicht, sondern kehrt in den Shop zurueck.
+    //Frueher endete der Vorgang nach der ersten Rueckgabe, obwohl dem Shop
+    //weitere zugesagt waren.
+    multipleResult : Boolean;
+    received : Integer;
+    returning : Boolean;
+    captionBase : String;
+    //Holt die Rueckgaben ab und liefert deren Gesamtzahl; wird nach jeder
+    //Uebertragung und regelmaessig ueber collectTimer aufgerufen
+    onTransfer : TFunc<Integer>;
+    collectTimer : TTimer;
+    collecting : Boolean;
+    procedure ReturnToShop;
+    procedure Collect;
+    procedure UpdateCaption;
+    procedure DoCollectTimer(Sender : TObject);
+    procedure WMIDSConnectCollect(var Msg : TMessage); message WM_IDSCONNECT_COLLECT;
   public
     //Liefert den Ordner, in dem WebView2 Profil, Cookies und Cache ablegt.
     //Ist _CachePath leer, wird der Unterordner WebView2 neben der EXE
     //verwendet und bei Bedarf angelegt.
     class function ResolveCachePath(const _CachePath : String) : String;
+    //_MultipleResult: nach einer Navigation zur Ruecksprungadresse offen
+    //bleiben; der Anwender schliesst das Fenster selbst, wenn er fertig ist.
+    //_OnTransfer (nur mit _MultipleResult): holt die Rueckgaben schon
+    //waehrend der Sitzung ab und liefert deren Gesamtzahl.
     class function ShowDialog(const _IDSHTMLValue,_CachePath : String;
-                              const _ReturnUrlPrefix : String = '') : Boolean;
+                              const _ReturnUrlPrefix : String = '';
+                              _MultipleResult : Boolean = false;
+                              _OnTransfer : TFunc<Integer> = nil) : Boolean;
   end;
 
 implementation
@@ -81,12 +109,86 @@ begin
   if returnUrlPrefix = '' then
     exit;
   if not IsSuccess then
+  begin
+    //Der Schritt zurueck kann scheitern, wenn die vorherige Shopseite selbst
+    //das Ergebnis eines POST war und nicht erneut gesendet werden darf -
+    //dann den Shop ueber das urspruengliche Formular neu oeffnen
+    if returning then
+    begin
+      returning := false;
+      WebBrowser.NavigateToString(content);
+    end;
     exit;
+  end;
+  returning := false;
   //Der frueher hier verdrahtete Handler hatte die Signatur des alten
   //TWebBrowser und war in der DFM gar nicht zugewiesen - ModalResult wurde
   //deshalb nie gesetzt und ShowDialog lieferte immer false.
-  if StartsText(returnUrlPrefix,WebBrowser.LocationURL) then
+  if not StartsText(returnUrlPrefix,WebBrowser.LocationURL) then
+    exit;
+  if not multipleResult then
+  begin
     ModalResult := mrOK;
+    exit;
+  end;
+  //Nicht direkt hier abholen: der Abruf kann IDSCONNECT_ONERROR ausloesen,
+  //und ein modaler Dialog darin waere eine verschachtelte Nachrichtenschleife
+  //innerhalb eines WebView2-Ereignisses - laut Microsoft nicht unterstuetzt.
+  //Die Meldung wird erst nach Rueckkehr aus dem Ereignis verarbeitet; ist
+  //das Fenster bis dahin zerstoert, verfaellt sie.
+  if Assigned(onTransfer) then
+    PostMessage(Handle,WM_IDSCONNECT_COLLECT,0,0)
+  else
+    Inc(received);
+  ReturnToShop;
+end;
+
+procedure TIDSConnectDlgWebBrowser.WMIDSConnectCollect(var Msg: TMessage);
+begin
+  Collect;
+end;
+
+procedure TIDSConnectDlgWebBrowser.Collect;
+begin
+  //Der Abruf laeuft synchron; ein Timer-Ereignis waehrenddessen darf ihn
+  //nicht erneut anstossen
+  if collecting or (not Assigned(onTransfer)) then
+    exit;
+  collecting := true;
+  try
+    received := onTransfer();
+    UpdateCaption;
+  finally
+    collecting := false;
+  end;
+end;
+
+procedure TIDSConnectDlgWebBrowser.DoCollectTimer(Sender: TObject);
+begin
+  //Shops, die per Skript im Hintergrund an die Hook-URL senden, loesen keine
+  //Navigation aus - deshalb zusaetzlich regelmaessig abholen
+  Collect;
+end;
+
+procedure TIDSConnectDlgWebBrowser.UpdateCaption;
+begin
+  if received = 0 then
+    exit;
+  if received = 1 then
+    Caption := captionBase+' - 1 Rückgabe übernommen, Fenster schließen, wenn Sie fertig sind'
+  else
+    Caption := Format('%s - %d Rückgaben übernommen, Fenster schließen, wenn Sie fertig sind',
+                      [captionBase,received]);
+end;
+
+procedure TIDSConnectDlgWebBrowser.ReturnToShop;
+begin
+  UpdateCaption;
+  returning := true;
+  if WebBrowser.CanGoBack then
+    WebBrowser.GoBack
+  else
+    WebBrowser.NavigateToString(content);
 end;
 
 class function TIDSConnectDlgWebBrowser.ResolveCachePath(const _CachePath: String): String;
@@ -110,7 +212,8 @@ begin
 end;
 
 class function TIDSConnectDlgWebBrowser.ShowDialog(const _IDSHTMLValue,_CachePath : String;
-  const _ReturnUrlPrefix : String): Boolean;
+  const _ReturnUrlPrefix : String; _MultipleResult : Boolean;
+  _OnTransfer : TFunc<Integer>): Boolean;
 var
   lDlg : TIDSConnectDlgWebBrowser;
   lBounds, lWorkArea : TRect;
@@ -141,7 +244,24 @@ begin
     lDlg.WebBrowser.UserDataFolder := ResolveCachePath(_CachePath);
     lDlg.content := _IDSHTMLValue;
     lDlg.returnUrlPrefix := _ReturnUrlPrefix;
+    lDlg.multipleResult := _MultipleResult;
+    lDlg.captionBase := lDlg.Caption;
+    if _MultipleResult and Assigned(_OnTransfer) then
+    begin
+      lDlg.onTransfer := _OnTransfer;
+      //Der Timer gehoert dem Dialog und wird mit ihm freigegeben
+      lDlg.collectTimer := TTimer.Create(lDlg);
+      lDlg.collectTimer.Interval := 60000;
+      lDlg.collectTimer.OnTimer := lDlg.DoCollectTimer;
+      lDlg.collectTimer.Enabled := true;
+    end;
     Result := lDlg.ShowModal = mrOK;
+    if Assigned(lDlg.collectTimer) then
+      lDlg.collectTimer.Enabled := false;
+    //Bei Mehrfachrueckgabe schliesst der Anwender das Fenster selbst; der
+    //Vorgang war erfolgreich, sobald mindestens eine Uebertragung erfolgte
+    if _MultipleResult and (lDlg.received > 0) then
+      Result := true;
   finally
     //Die Lebensdauer gehoert eindeutig hierher. Das fruehere Action := caFree
     //im OnClose hat zusaetzlich Release gepostet - zusammen mit diesem Free

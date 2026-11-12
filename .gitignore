@@ -85,3 +85,8 @@ configuration.ini
 config.ini
 Testdata/
 *.delphilsp.json
+# Lokale Arbeitslisten (Codex/Claude)
+BACKLOG.md
+CHANGELOG.md
+AGENTS.md
+CLAUDE.md

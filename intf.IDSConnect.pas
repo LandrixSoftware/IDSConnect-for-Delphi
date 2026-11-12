@@ -53,12 +53,33 @@ type
     //eigenen Parameter hookURLTimeout an IDSConnectAS.
     IDSCONNECT_HOOKURL_TIMEOUT : Integer;
     //Nur bei Mehrfachrueckgabe: wie lange (in Sekunden) nach einer
-    //eingetroffenen Rueckgabe noch auf weitere gewartet wird. Ob ein Shop die
-    //Mehrfachrueckgabe ueberhaupt beherrscht, laesst sich nicht abfragen -
-    //ohne diese Verkuerzung stuende der Warte-Dialog bei Shops, die genau
-    //einmal senden, bis zum Ablauf von hookURLTimeout offen.
-    //0 = immer die volle Frist abwarten.
+    //eingetroffenen Rueckgabe noch auf weitere gewartet wird.
+    //0 (Voreinstellung) = die volle Frist hookURLTimeout ab der letzten
+    //Uebertragung, wie sie dem Shop zugesagt wurde; der Anwender beendet den
+    //Vorgang mit "Fertig". Ein kleinerer Wert schliesst den Dialog frueher,
+    //verwirft dann aber Rueckgaben, die der Shop innerhalb der zugesagten
+    //Frist noch sendet.
     IDSCONNECT_MULTIPLERESULT_FOLLOWUP : Integer;
+  public const
+    //Hoechstzahl der Abrufe in einem Durchgang von CollectResults - schuetzt
+    //vor einer Endlosschleife, falls ein Hook-Server die Rueckgabe beim Abruf
+    //nicht verbraucht
+    IDSCONNECT_MAX_COLLECT = 50;
+  public type
+    //Zustand beim Sammeln mehrerer Rueckgaben (Mehrfachrueckgabe). Vor dem
+    //ersten Aufruf von CollectResults mit Default() initialisieren.
+    TCollectState = record
+      Received : Integer;          //Anzahl der uebernommenen Rueckgaben
+      SeenIds : TArray<String>;    //Kennungen (X-IDSConnect-Id) aller
+                                   //uebernommenen Rueckgaben
+      LastRaw : TBytes;            //Rohdaten der letzten Rueckgabe, falls der
+                                   //Server keine Kennung liefert
+      LastHadId : Boolean;         //Die letzte Rueckgabe hatte eine Kennung
+      ErrorReported : Boolean;     //Abruffehler wurde bereits gemeldet
+      DuplicateReported : Boolean; //Wiederholte Rueckgabe wurde bereits gemeldet
+      LimitReached : Boolean;      //Der letzte Durchgang endete an
+                                   //IDSCONNECT_MAX_COLLECT, es kann mehr vorliegen
+    end;
   private type
     TValidateCertificatHelper = class(TObject)
       procedure DoValidateCertificateEvent(const Sender: TObject;
@@ -70,6 +91,16 @@ type
     class function GetUuid : String;
     class function HookUrlWithSid(const _Sid : String) : String;
     class function TryFetchResult(const _Url : String;_Warenkorb : TIDSConnect_Warenkorb) : Boolean; overload;
+    //Wie TryFetchResult, liefert zusaetzlich die Rohdaten der Antwort und die
+    //Kennung der Uebertragung (Header X-IDSConnect-Id, leer, wenn der Server
+    //keine sendet)
+    class function FetchResult(const _Url : String;_Warenkorb : TIDSConnect_Warenkorb;
+                               out _Error : String; out _Raw : TBytes;
+                               out _Id : String) : Boolean;
+    //Ruft CollectResults so oft auf, bis die Warteschlange leer ist (begrenzt
+    //auf 20 Durchgaenge); bleibt danach noch etwas liegen, wird es gemeldet
+    class procedure CollectAll(const _Url : String; _Warenkorb : TIDSConnect_Warenkorb;
+                               var _State : TCollectState);
     //Basisadresse der Hook-URL ohne Query - daran erkennt der integrierte
     //Browser, dass die Rueck-Kommunikation abgeschlossen ist
     class function HookUrlBase : String;
@@ -101,7 +132,25 @@ type
     //Haengt die Positionen einer Rueckgabe an den Zielwarenkorb an. Wird bei
     //der Mehrfachrueckgabe (multipleResult, ab IDS 2.5.1) gebraucht und steht
     //auch fuer eine eigene Ablaufsteuerung zur Verfuegung.
-    class procedure MergeOrderItems(_From,_To : TIDSConnect_Warenkorb);
+    //Mit _TakeHeader werden zusaetzlich alle Kopfdaten (WarenkorbInfo,
+    //OrderInfo inkl. Waehrung und Referenzen, Lieferanten-, Kunden- und
+    //Lieferortdaten) uebernommen - das gehoert zur ersten Rueckgabe.
+    class procedure MergeOrderItems(_From,_To : TIDSConnect_Warenkorb;
+                                    _TakeHeader : Boolean); overload;
+    //Uebernimmt die Kopfdaten, solange der Zielwarenkorb noch keine
+    //Positionen hat
+    class procedure MergeOrderItems(_From,_To : TIDSConnect_Warenkorb); overload;
+    //Holt die an der Hook-URL aufgelaufenen Rueckgaben ab (hoechstens
+    //IDSCONNECT_MAX_COLLECT je Aufruf, dann ist _State.LimitReached gesetzt)
+    //und haengt sie an _Warenkorb an; die erste liefert auch die Kopfdaten.
+    //Der Hook-Server muss jede Rueckgabe beim Abruf verbrauchen
+    //(Warteschlange, siehe idsconnect.php). Wiederholt er eine Rueckgabe,
+    //wird sie verworfen und einmalig gemeldet - erkannt an der Kennung
+    //X-IDSConnect-Id, bei Servern ohne Kennung an gleichen Rohdaten.
+    //Ergebnis: true, wenn in diesem Aufruf mindestens eine neue Rueckgabe
+    //uebernommen wurde.
+    class function CollectResults(const _Url : String; _Warenkorb : TIDSConnect_Warenkorb;
+                                  var _State : TCollectState) : Boolean;
 
     //Aktion "LI": fragt ab, welche Anmeldedaten das Shop-System benoetigt.
     //Laeuft als direkter POST, ohne Browser und ohne Hook-URL.
@@ -1816,14 +1865,25 @@ end;
 class function TIDSConnect.TryFetchResult(const _Url: String;
   _Warenkorb: TIDSConnect_Warenkorb; out _Error : String): Boolean;
 var
+  lRaw : TBytes;
+  lId : String;
+begin
+  Result := FetchResult(_Url,_Warenkorb,_Error,lRaw,lId);
+end;
+
+class function TIDSConnect.FetchResult(const _Url: String;
+  _Warenkorb: TIDSConnect_Warenkorb; out _Error : String; out _Raw : TBytes;
+  out _Id : String): Boolean;
+var
   str : TMemoryStream;
   http : THTTPClient;
   vcHelper : TIDSConnect.TValidateCertificatHelper;
   res : IHTTPResponse;
-  body : TBytes;
 begin
   Result := false;
   _Error := '';
+  _Raw := nil;
+  _Id := '';
   if (_Url = '') or (_Warenkorb = nil) then
     exit;
 
@@ -1845,14 +1905,12 @@ begin
       //bzw. mit einem leeren Rumpf. Das ist kein Fehler, sondern der
       //Normalfall waehrend des Wartens - deshalb wird hier nichts gemeldet.
       res := http.Get(_Url,str);
+      SetLength(_Raw,str.Size);
+      str.Position := 0;
+      if Length(_Raw) > 0 then
+        str.ReadBuffer(_Raw[0],Length(_Raw));
       if Assigned(IDSCONNECT_ONRESPONSE) then
-      begin
-        SetLength(body,str.Size);
-        str.Position := 0;
-        if Length(body) > 0 then
-          str.ReadBuffer(body[0],Length(body));
-        IDSCONNECT_ONRESPONSE(_Url,res.StatusCode,body);
-      end;
+        IDSCONNECT_ONRESPONSE(_Url,res.StatusCode,_Raw);
       if res.StatusCode <> 200 then
       begin
         if res.StatusCode <> 404 then
@@ -1861,6 +1919,7 @@ begin
       end;
       if str.Size = 0 then
         exit;
+      _Id := Trim(res.HeaderValue['X-IDSConnect-Id']);
       Result := _Warenkorb.LoadFromStream(str);
       if not Result then
         _Error := 'Die Rückgabe konnte nicht als Warenkorb eingelesen werden.';
@@ -1892,24 +1951,124 @@ begin
     ReportError(lError,nil);
 end;
 
-class procedure TIDSConnect.MergeOrderItems(_From, _To: TIDSConnect_Warenkorb);
+class procedure TIDSConnect.MergeOrderItems(_From, _To: TIDSConnect_Warenkorb;
+  _TakeHeader: Boolean);
 var
   i : Integer;
 begin
   if (_From = nil) or (_To = nil) then
     exit;
-  //Bei der ersten Rueckgabe auch die Kopfdaten uebernehmen; danach werden nur
-  //noch Positionen angehaengt, damit mehrere Rueckgaben nicht die zuvor
-  //empfangenen ueberschreiben.
-  if _To.Order.OrderItems.Count = 0 then
+  //Die erste Rueckgabe liefert die Kopfdaten. Frueher wurden dabei nur Datum,
+  //Uhrzeit, RueckgabeKZ und Version uebernommen - Waehrung, Kommission,
+  //Referenzen und die Adressen fielen weg, ein CHF-Warenkorb wurde so zu EUR.
+  if _TakeHeader then
   begin
-    _To.WarenkorbInfo.Date := _From.WarenkorbInfo.Date;
-    _To.WarenkorbInfo.Time := _From.WarenkorbInfo.Time;
-    _To.WarenkorbInfo.RueckgabeKZ := _From.WarenkorbInfo.RueckgabeKZ;
-    _To.WarenkorbInfo.Version := _From.WarenkorbInfo.Version;
+    _To.WarenkorbInfo.Assign(_From.WarenkorbInfo);
+    _To.Order.AssignHeader(_From.Order);
   end;
   for i := 0 to _From.Order.OrderItems.Count-1 do
     _To.Order.OrderItems.AddItem.Assign(_From.Order.OrderItems[i]);
+end;
+
+class procedure TIDSConnect.MergeOrderItems(_From, _To: TIDSConnect_Warenkorb);
+begin
+  if _To = nil then
+    exit;
+  MergeOrderItems(_From,_To,_To.Order.OrderItems.Count = 0);
+end;
+
+class function TIDSConnect.CollectResults(const _Url: String;
+  _Warenkorb: TIDSConnect_Warenkorb; var _State: TCollectState): Boolean;
+var
+  lBuffer : TIDSConnect_Warenkorb;
+  lError, lId, lSeen : String;
+  lRaw : TBytes;
+  i : Integer;
+  lDuplicate : Boolean;
+begin
+  Result := false;
+  _State.LimitReached := false;
+  if (_Url = '') or (_Warenkorb = nil) then
+    exit;
+  if _State.Received = 0 then
+    _Warenkorb.Clear;
+  //LoadFromStream leert den Zielwarenkorb, deshalb wird ueber einen
+  //Zwischenpuffer gelesen und anschliessend zusammengefuehrt.
+  lBuffer := TIDSConnect_Warenkorb.Create;
+  try
+    //Die Obergrenze schuetzt vor einer Endlosschleife, falls ein Hook-Server
+    //die Rueckgabe beim Abruf nicht verbraucht
+    for i := 1 to IDSCONNECT_MAX_COLLECT do
+    begin
+      if not FetchResult(_Url,lBuffer,lError,lRaw,lId) then
+      begin
+        if (lError <> '') and (not _State.ErrorReported) then
+        begin
+          _State.ErrorReported := true;
+          ReportError('Der Abruf von '+_Url+' ist fehlgeschlagen: '+lError,nil);
+        end;
+        exit;
+      end;
+      //Ein Hook-Server, der beim Abruf nicht loescht, liefert dieselbe
+      //Rueckgabe immer wieder - sie wuerde sonst bei jedem Abruf erneut
+      //angehaengt und die Frist liefe nie ab. Mit Kennung ist das eindeutig;
+      //inhaltsgleiche, aber eigenstaendige Uebertragungen haben verschiedene
+      //Kennungen. Ohne Kennung bleibt nur der Vergleich der Rohdaten.
+      lDuplicate := false;
+      if lId <> '' then
+      begin
+        //Mit Kennung gegen alle bereits uebernommenen pruefen - ein Server,
+        //der zyklisch ausliefert (A, B, A), wird so ebenfalls erkannt
+        for lSeen in _State.SeenIds do
+          if lSeen = lId then
+          begin
+            lDuplicate := true;
+            break;
+          end;
+      end else
+      //Ohne Kennung: mit der letzten Rueckgabe vergleichen, sofern auch diese
+      //keine Kennung hatte
+      if (_State.Received > 0) and (not _State.LastHadId) then
+        lDuplicate := (Length(lRaw) = Length(_State.LastRaw)) and
+                      CompareMem(PByte(lRaw),PByte(_State.LastRaw),Length(lRaw));
+      if lDuplicate then
+      begin
+        if not _State.DuplicateReported then
+        begin
+          _State.DuplicateReported := true;
+          ReportError('Die Hook-URL liefert dieselbe Rückgabe erneut; sie wurde verworfen. '+
+                      'Der Hook-Server muss jede Rückgabe beim Abruf löschen (siehe idsconnect.php).',nil);
+        end;
+        exit;
+      end;
+      MergeOrderItems(lBuffer,_Warenkorb,_State.Received = 0);
+      if lId <> '' then
+        _State.SeenIds := _State.SeenIds + [lId];
+      _State.LastHadId := lId <> '';
+      _State.LastRaw := lRaw;
+      Inc(_State.Received);
+      Result := true;
+    end;
+    //Schleife ohne leere Warteschlange beendet: es kann noch mehr vorliegen
+    _State.LimitReached := true;
+  finally
+    lBuffer.Free;
+  end;
+end;
+
+class procedure TIDSConnect.CollectAll(const _Url: String;
+  _Warenkorb: TIDSConnect_Warenkorb; var _State: TCollectState);
+var
+  i : Integer;
+begin
+  for i := 1 to 20 do
+  begin
+    CollectResults(_Url,_Warenkorb,_State);
+    if not _State.LimitReached then
+      exit;
+  end;
+  ReportError(Format('An der Hook-URL liegen nach %d Rückgaben noch weitere vor; '+
+                     'sie wurden nicht mehr abgeholt.',[_State.Received]),nil);
 end;
 
 class function TIDSConnect.WaitForResult(const _Url: String;
@@ -1917,7 +2076,7 @@ class function TIDSConnect.WaitForResult(const _Url: String;
   _MultipleResult: Boolean): Boolean;
 var
   lReported : Boolean;
-  lBuffer : TIDSConnect_Warenkorb;
+  lState : TCollectState;
 begin
   //Frueher stand hier ein TaskMessageDlg mit genau einem Abrufversuch
   //danach: war der Warenkorb noch nicht angekommen, scheiterte der Vorgang
@@ -1955,42 +2114,33 @@ begin
   //Mehrfachrueckgabe (ab IDS 2.5.1): Der Shop darf mehrfach an die Hook-URL
   //senden. Jede Rueckgabe wird eingelesen und an den Warenkorb angehaengt,
   //bis der Anwender den Vorgang beendet oder die Frist abgelaufen ist.
-  //LoadFromStream leert den Zielwarenkorb, deshalb wird ueber einen
-  //Zwischenpuffer gelesen und anschliessend zusammengefuehrt.
+  lState := Default(TCollectState);
   _Warenkorb.Clear;
-  lBuffer := TIDSConnect_Warenkorb.Create;
-  try
-    Result := TIDSConnectDlgWait.Execute(
+  TIDSConnectDlgWait.Execute(
                 'Warte auf Abschluss',
                 'Sie koennen nacheinander mehrere Artikel uebernehmen.'+sLineBreak+
                 'Schliessen Sie den Vorgang mit "Fertig" ab.',
                 _TimeoutSec,
                 function : TIDSConnectPollResult
-                var
-                  lError : String;
                 begin
-                  Result := idsPollNothing;
-                  if TryFetchResult(_Url,lBuffer,lError) then
-                  begin
-                    MergeOrderItems(lBuffer,_Warenkorb);
+                  if CollectResults(_Url,_Warenkorb,lState) then
                     //Weiter warten - es koennen noch Rueckgaben folgen
-                    Result := idsPollReceived;
-                  end else
-                  if (lError <> '') and (not lReported) then
-                  begin
-                    lReported := true;
-                    ReportError('Der Abruf von '+_Url+' ist fehlgeschlagen: '+lError,nil);
-                  end;
+                    Result := idsPollReceived
+                  else
+                    Result := idsPollNothing;
                 end,
                 2000,
-                //Nach der ersten Rueckgabe nur noch kurz auf weitere warten.
-                //Shops, die die Mehrfachrueckgabe nicht kennen, senden genau
-                //einmal - ohne diese Verkuerzung stuende der Dialog danach die
-                //volle Frist offen.
-                IDSCONNECT_MULTIPLERESULT_FOLLOWUP);
-  finally
-    lBuffer.Free;
-  end;
+                IDSCONNECT_MULTIPLERESULT_FOLLOWUP,
+                //Ein Abruf kann mehrere Rueckgaben uebernehmen - der Dialog
+                //zeigt deshalb die tatsaechliche Anzahl
+                function : Integer
+                begin
+                  Result := lState.Received;
+                end);
+  //Was zwischen dem letzten Abruf und dem Schliessen des Dialogs eingetroffen
+  //ist, wuerde sonst ungelesen auf dem Server verfallen
+  CollectAll(_Url,_Warenkorb,lState);
+  Result := lState.Received > 0;
 end;
 
 class function TIDSConnect.BuildFormHeader(const _Title: String): String;
@@ -2045,7 +2195,7 @@ class function TIDSConnect.ShowFormAndFetch(_Form: TStrings; const _TmpFilename,
   _ResultUrl: String; _Warenkorb: TIDSConnect_Warenkorb;
   _TimeoutSec: Integer; _MultipleResult: Boolean): Boolean;
 var
-  lBuffer : TIDSConnect_Warenkorb;
+  lState : TCollectState;
 begin
   Result := false;
 
@@ -2054,7 +2204,23 @@ begin
     //Integrierter Browser. Der Dialog schliesst sich selbst, sobald der Shop
     //zur Hook-URL navigiert - deshalb ist hier kein zusaetzlicher
     //Warte-Dialog noetig.
-    TIDSConnectDlgWebBrowser.ShowDialog(_Form.Text,'',HookUrlBase);
+    //Bei Mehrfachrueckgabe bleibt der Dialog nach einer Uebertragung offen,
+    //damit der Anwender im Shop weitere Artikel uebernehmen kann. Die
+    //Rueckgaben werden schon waehrend der Sitzung abgeholt (nach jeder
+    //Uebertragung und regelmaessig) - sonst verfielen sie bei einer langen
+    //Sitzung nach der TTL des Hook-Servers.
+    lState := Default(TCollectState);
+    if _MultipleResult and (_ResultUrl <> '') then
+    begin
+      _Warenkorb.Clear;
+      TIDSConnectDlgWebBrowser.ShowDialog(_Form.Text,'',HookUrlBase,true,
+        function : Integer
+        begin
+          CollectAll(_ResultUrl,_Warenkorb,lState);
+          Result := lState.Received;
+        end);
+    end else
+      TIDSConnectDlgWebBrowser.ShowDialog(_Form.Text,'',HookUrlBase);
     if _ResultUrl = '' then
     begin
       Result := true;
@@ -2067,19 +2233,9 @@ begin
       Result := TryFetchResult(_ResultUrl,_Warenkorb);
       exit;
     end;
-    //Bei Mehrfachrueckgabe koennen im integrierten Browser mehrere Rueckgaben
-    //aufgelaufen sein; sie werden nacheinander abgeholt und zusammengefuehrt.
-    _Warenkorb.Clear;
-    lBuffer := TIDSConnect_Warenkorb.Create;
-    try
-      while TryFetchResult(_ResultUrl,lBuffer) do
-      begin
-        MergeOrderItems(lBuffer,_Warenkorb);
-        Result := true;
-      end;
-    finally
-      lBuffer.Free;
-    end;
+    //Was seit dem letzten Abruf noch eingetroffen ist
+    CollectAll(_ResultUrl,_Warenkorb,lState);
+    Result := lState.Received > 0;
     exit;
   end;
 
@@ -2304,7 +2460,10 @@ begin
 end;
 
 initialization
-  //Voreinstellung: nach einer Rueckgabe noch 30 Sekunden auf weitere warten
-  TIDSConnect.IDSCONNECT_MULTIPLERESULT_FOLLOWUP := 30;
+  //Voreinstellung: nach jeder Rueckgabe die volle zugesagte Frist
+  //(hookURLTimeout) auf weitere warten. Die fruehere Voreinstellung von
+  //30 Sekunden verwarf Rueckgaben, die der Shop innerhalb der zugesagten
+  //Frist noch sandte.
+  TIDSConnect.IDSCONNECT_MULTIPLERESULT_FOLLOWUP := 0;
 
 end.

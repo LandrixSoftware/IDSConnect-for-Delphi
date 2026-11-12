@@ -48,6 +48,7 @@ type
     Version     : TIDSConnect_Version;//Muss Angabe der Schnittstellenversion max 2.5
     constructor Create;
     procedure Clear;
+    procedure Assign(_From : TIDSConnect_WarenkorbInfo);
   end;
 
   //Lieferung / Abholung
@@ -121,6 +122,7 @@ type
     constructor Create;
     destructor Destroy; override;
     procedure Clear;
+    procedure Assign(_From : TIDSConnect_OrderInfo);
   end;
 
   TIDSConnect_Address = class(TObject)
@@ -143,6 +145,7 @@ type
     Email : String;   //String 256
     constructor Create;
     procedure Clear;
+    procedure Assign(_From : TIDSConnect_Address);
   end;
 
   //Informationen zum Lieferanten
@@ -153,6 +156,7 @@ type
     constructor Create;
     destructor Destroy; override;
     procedure Clear;
+    procedure Assign(_From : TIDSConnect_SupplierInfo);
   end;
 
   //Informationen zum Besteller (Kunden)
@@ -163,6 +167,7 @@ type
     constructor Create;
     destructor Destroy; override;
     procedure Clear;
+    procedure Assign(_From : TIDSConnect_CustomerInfo);
   end;
 
   //Struktur zur Abbildung der Lieferadresse bzw.Abholadresse abh�ngig von der Versandart
@@ -177,6 +182,7 @@ type
     constructor Create;
     destructor Destroy; override;
     procedure Clear;
+    procedure Assign(_From : TIDSConnect_DeliveryPlaceInfo);
   end;
 
   TIDSConnect_ItemChara = (idsConnectIc_normal,   //String value="normal"
@@ -304,6 +310,11 @@ type
     constructor Create;
     destructor Destroy; override;
     procedure Clear;
+    //Uebernimmt OrderInfo, SupplierInfo, CustomerInfo und DeliveryPlaceInfo,
+    //aber keine Positionen
+    procedure AssignHeader(_From : TIDSConnect_Order);
+    //Uebernimmt Kopfdaten und Positionen
+    procedure Assign(_From : TIDSConnect_Order);
   end;
 
   TIDSConnect_Warenkorb = class(TObject)
@@ -314,6 +325,7 @@ type
     constructor Create;
     destructor Destroy; override;
     procedure Clear;
+    procedure Assign(_From : TIDSConnect_Warenkorb);
   end;
 
 implementation
@@ -346,6 +358,16 @@ begin
   Version     := idsConnectVersion_2_5_1;
 end;
 
+procedure TIDSConnect_WarenkorbInfo.Assign(_From: TIDSConnect_WarenkorbInfo);
+begin
+  if (_From = nil) or (_From = Self) then
+    exit;
+  Date        := _From.Date;
+  Time        := _From.Time;
+  RueckgabeKZ := _From.RueckgabeKZ;
+  Version     := _From.Version;
+end;
+
 { TIDSConnect_Referenz }
 
 constructor TIDSConnect_Referenz.Create;
@@ -362,7 +384,7 @@ end;
 
 procedure TIDSConnect_Referenz.Assign(_From: TIDSConnect_Referenz);
 begin
-  if _From = nil then
+  if (_From = nil) or (_From = Self) then
     exit;
   ReferenzNumber := _From.ReferenzNumber;
   ReferenzDate := _From.ReferenzDate;
@@ -430,6 +452,28 @@ begin
   Cur := 'EUR';
 end;
 
+procedure TIDSConnect_OrderInfo.Assign(_From: TIDSConnect_OrderInfo);
+var
+  i : Integer;
+begin
+  if (_From = nil) or (_From = Self) then
+    exit;
+  InquiryNo := _From.InquiryNo;
+  OfferNo := _From.OfferNo;
+  PartNo := _From.PartNo;
+  OrderConfNo := _From.OrderConfNo;
+  Referenzen.Clear;
+  for i := 0 to _From.Referenzen.Count-1 do
+    Referenzen.AddItem.Assign(_From.Referenzen[i]);
+  DeliveryWeek := _From.DeliveryWeek;
+  DeliveryYear := _From.DeliveryYear;
+  DeliveryDate := _From.DeliveryDate;
+  ModeOfShipment := _From.ModeOfShipment;
+  ZusatzText := _From.ZusatzText;
+  Kommission := _From.Kommission;
+  Cur := _From.Cur;
+end;
+
 { TIDSConnect_Address }
 
 constructor TIDSConnect_Address.Create;
@@ -457,6 +501,28 @@ begin
   Email := '';
 end;
 
+procedure TIDSConnect_Address.Assign(_From: TIDSConnect_Address);
+begin
+  if (_From = nil) or (_From = Self) then
+    exit;
+  Name1 := _From.Name1;
+  Name2 := _From.Name2;
+  Name3 := _From.Name3;
+  Name4 := _From.Name4;
+  Street := _From.Street;
+  Street1 := _From.Street1;
+  Street2 := _From.Street2;
+  Street3 := _From.Street3;
+  PCode := _From.PCode;
+  City := _From.City;
+  Country := _From.Country;
+  ILN := _From.ILN;
+  Contact := _From.Contact;
+  Phone := _From.Phone;
+  Fax := _From.Fax;
+  Email := _From.Email;
+end;
+
 { TIDSConnect_SupplierInfo }
 
 constructor TIDSConnect_SupplierInfo.Create;
@@ -477,6 +543,14 @@ begin
   Address.Clear;
 end;
 
+procedure TIDSConnect_SupplierInfo.Assign(_From: TIDSConnect_SupplierInfo);
+begin
+  if (_From = nil) or (_From = Self) then
+    exit;
+  IDNo := _From.IDNo;
+  Address.Assign(_From.Address);
+end;
+
 { TIDSConnect_CustomerInfo }
 
 constructor TIDSConnect_CustomerInfo.Create;
@@ -495,6 +569,14 @@ procedure TIDSConnect_CustomerInfo.Clear;
 begin
   IDNo := '';
   Address.Clear;
+end;
+
+procedure TIDSConnect_CustomerInfo.Assign(_From: TIDSConnect_CustomerInfo);
+begin
+  if (_From = nil) or (_From = Self) then
+    exit;
+  IDNo := _From.IDNo;
+  Address.Assign(_From.Address);
 end;
 
 { TIDSConnect_DeliveryPlaceInfo }
@@ -520,6 +602,17 @@ begin
   GeoLang := 0;
 end;
 
+procedure TIDSConnect_DeliveryPlaceInfo.Assign(_From: TIDSConnect_DeliveryPlaceInfo);
+begin
+  if (_From = nil) or (_From = Self) then
+    exit;
+  IDNo := _From.IDNo;
+  Address.Assign(_From.Address);
+  HasGeoLocation := _From.HasGeoLocation;
+  GeoLat := _From.GeoLat;
+  GeoLang := _From.GeoLang;
+end;
+
 { TIDSConnect_Rohstoffanteil }
 
 constructor TIDSConnect_Rohstoffanteil.Create;
@@ -540,7 +633,7 @@ end;
 
 procedure TIDSConnect_Rohstoffanteil.Assign(_From: TIDSConnect_Rohstoffanteil);
 begin
-  if _From = nil then
+  if (_From = nil) or (_From = Self) then
     exit;
   Rohstoff := _From.Rohstoff;
   Gewichtsanteilswert := _From.Gewichtsanteilswert;
@@ -610,7 +703,7 @@ procedure TIDSConnect_OrderItem.Assign(_From: TIDSConnect_OrderItem);
 var
   i : Integer;
 begin
-  if _From = nil then
+  if (_From = nil) or (_From = Self) then
     exit;
   ItemChara := _From.ItemChara;
   RefItems_Customer := _From.RefItems_Customer;
@@ -686,12 +779,42 @@ begin
   OrderItems.Clear;
 end;
 
+procedure TIDSConnect_Order.AssignHeader(_From: TIDSConnect_Order);
+begin
+  if (_From = nil) or (_From = Self) then
+    exit;
+  OrderInfo.Assign(_From.OrderInfo);
+  SupplierInfo.Assign(_From.SupplierInfo);
+  CustomerInfo.Assign(_From.CustomerInfo);
+  DeliveryPlaceInfo.Assign(_From.DeliveryPlaceInfo);
+end;
+
+procedure TIDSConnect_Order.Assign(_From: TIDSConnect_Order);
+var
+  i : Integer;
+begin
+  if (_From = nil) or (_From = Self) then
+    exit;
+  AssignHeader(_From);
+  OrderItems.Clear;
+  for i := 0 to _From.OrderItems.Count-1 do
+    OrderItems.AddItem.Assign(_From.OrderItems[i]);
+end;
+
 { TIDSConnect_Warenkorb }
 
 procedure TIDSConnect_Warenkorb.Clear;
 begin
   WarenkorbInfo.Clear;
   Order.Clear;
+end;
+
+procedure TIDSConnect_Warenkorb.Assign(_From: TIDSConnect_Warenkorb);
+begin
+  if (_From = nil) or (_From = Self) then
+    exit;
+  WarenkorbInfo.Assign(_From.WarenkorbInfo);
+  Order.Assign(_From.Order);
 end;
 
 constructor TIDSConnect_Warenkorb.Create;

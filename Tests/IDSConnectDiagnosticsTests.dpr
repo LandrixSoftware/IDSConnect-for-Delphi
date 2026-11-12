@@ -20,6 +20,9 @@ var
   Bytes: TBytes;
   Versions: TStringList;
   Login: TIDSConnect_LoginInfo;
+  State: TIDSConnect.TCollectState;
+  Merged: TIDSConnect_Warenkorb;
+  LastError: String;
 begin
   BaseUrl := ParamStr(1);
   Check(BaseUrl <> '', 'Missing local mock URL');
@@ -29,6 +32,7 @@ begin
       procedure(const Message: String; E: Exception)
       begin
         Writeln('Diagnostic: '+Message);
+        LastError := Message;
       end;
     Calls := 0;
     TIDSConnect.IDSCONNECT_ONRESPONSE :=
@@ -98,7 +102,83 @@ begin
     finally
       Versions.Free;
     end;
-    Writeln('PASS: response diagnostics, masked WKE request, selected and default versions for WKE/SV/LI');
+    //Multiple returns: queue is drained, header comes from the first return
+    Merged := TIDSConnect_Warenkorb.Create;
+    try
+      State := Default(TIDSConnect.TCollectState);
+      Check(TIDSConnect.CollectResults(BaseUrl+'/queue',Merged,State),'Queue not collected');
+      Check(State.Received = 2,'Queued returns missing: '+IntToStr(State.Received));
+      Check(Merged.Order.OrderItems.Count = 2,'Merged positions missing');
+      Check((Merged.Order.OrderItems[0].ArtNo = 'Q1') and
+            (Merged.Order.OrderItems[1].ArtNo = 'Q2'),'Merged order differs');
+      Check(Merged.Order.OrderInfo.Cur = 'CHF','Currency of first return lost');
+      Check(Merged.Order.OrderInfo.Kommission = 'K-1','Kommission of first return lost');
+      Check(Merged.Order.SupplierInfo.Address.Name1 = 'Lieferant','Supplier of first return lost');
+      Check(not TIDSConnect.CollectResults(BaseUrl+'/queue',Merged,State),'Empty queue reported data');
+      Check(Merged.Order.OrderItems.Count = 2,'Empty queue changed cart');
+
+      //A hook server that does not consume returns must not loop or duplicate
+      State := Default(TIDSConnect.TCollectState);
+      LastError := '';
+      Check(TIDSConnect.CollectResults(BaseUrl+'/sticky',Merged,State),'Sticky return rejected');
+      Check(State.Received = 1,'Sticky return duplicated: '+IntToStr(State.Received));
+      Check(Merged.Order.OrderItems.Count = 1,'Sticky positions duplicated');
+      Check(State.DuplicateReported and (LastError <> ''),'Duplicate not reported');
+      Check(not TIDSConnect.CollectResults(BaseUrl+'/sticky',Merged,State),'Sticky return collected again');
+      Check(Merged.Order.OrderItems.Count = 1,'Sticky positions duplicated on next poll');
+
+      //With transfer ids: identical content in separate transfers is kept
+      State := Default(TIDSConnect.TCollectState);
+      Check(TIDSConnect.CollectResults(BaseUrl+'/id-queue',Merged,State),'Id queue not collected');
+      Check(State.Received = 3,'Identical separate transfers dropped: '+IntToStr(State.Received));
+      Check((Merged.Order.OrderItems[0].ArtNo = 'S') and (Merged.Order.OrderItems[1].ArtNo = 'S') and
+            (Merged.Order.OrderItems[2].ArtNo = 'T'),'Id queue order differs');
+      Check(not State.DuplicateReported,'Separate transfers reported as duplicate');
+
+      //Same id again: repeated delivery of one transfer
+      State := Default(TIDSConnect.TCollectState);
+      Check(TIDSConnect.CollectResults(BaseUrl+'/sticky-id',Merged,State),'Sticky id rejected');
+      Check((State.Received = 1) and State.DuplicateReported,'Repeated id not detected');
+
+      //Cyclic delivery A, B, A: the repeated A is detected
+      State := Default(TIDSConnect.TCollectState);
+      Check(TIDSConnect.CollectResults(BaseUrl+'/cycle',Merged,State),'Cycle not collected');
+      Check((State.Received = 2) and State.DuplicateReported,
+            'Cyclic repeat not detected: '+IntToStr(State.Received));
+
+      //Mixed: A with id, then B twice without id - the repeated B is detected
+      State := Default(TIDSConnect.TCollectState);
+      Check(TIDSConnect.CollectResults(BaseUrl+'/mixed',Merged,State),'Mixed not collected');
+      Check((State.Received = 2) and State.DuplicateReported,
+            'Repeat without id after id not detected: '+IntToStr(State.Received));
+
+      //Limit per call is not a silent overall limit
+      State := Default(TIDSConnect.TCollectState);
+      Check(TIDSConnect.CollectResults(BaseUrl+'/many',Merged,State),'Many not collected');
+      Check((State.Received = TIDSConnect.IDSCONNECT_MAX_COLLECT) and State.LimitReached,
+            'Limit not signalled');
+      while State.LimitReached do
+        TIDSConnect.CollectResults(BaseUrl+'/many',Merged,State);
+      Check(State.Received = 120,'Transfers lost after limit: '+IntToStr(State.Received));
+      Check(Merged.Order.OrderItems[119].ArtNo = 'M119','Last transfer missing');
+
+      //Self assignment must not wipe lists
+      Merged.Order.OrderInfo.Referenzen.AddItem.ReferenzNumber := 'R1';
+      Merged.Assign(Merged);
+      Check(Merged.Order.OrderItems.Count = 120,'Self assign lost positions');
+      Check(Merged.Order.OrderInfo.Referenzen.Count = 1,'Self assign lost references');
+      Merged.Order.Assign(Merged.Order);
+      Check(Merged.Order.OrderItems.Count = 120,'Order self assign lost positions');
+      Merged.Order.OrderInfo.Assign(Merged.Order.OrderInfo);
+      Check(Merged.Order.OrderInfo.Referenzen.Count = 1,'OrderInfo self assign lost references');
+      Merged.Order.OrderItems[0].Referenzen.AddItem.ReferenzNumber := 'P1';
+      Merged.Order.OrderItems[0].Assign(Merged.Order.OrderItems[0]);
+      Check(Merged.Order.OrderItems[0].Referenzen.Count = 1,'OrderItem self assign lost references');
+    finally
+      Merged.Free;
+    end;
+
+    Writeln('PASS: response diagnostics, masked WKE request, selected and default versions for WKE/SV/LI, multiple-return queue/header/duplicates');
   finally
     TIDSConnect.IDSCONNECT_ONREQUEST := nil;
     TIDSConnect.IDSCONNECT_ONERROR := nil;
