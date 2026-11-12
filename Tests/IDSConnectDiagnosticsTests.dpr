@@ -78,6 +78,20 @@ begin
     Check(Pos('Name4',LastError) > 0,'Dropped Name4 not reported');
     Check(Pos('Abteilung',Xml) = 0,'Name4 written in 2.5.1');
 
+    //A reference without date is not sent with 1899-12-30
+    Cart.Order.CustomerInfo.Address.Name4 := '';
+    with Cart.Order.OrderInfo.Referenzen.AddItem do
+    begin
+      ReferenzNumber := 'R-OHNE';
+      ReferenzType := idsConnectRefType_220;
+    end;
+    LastError := '';
+    Xml := SaveCart(Cart);
+    Check(Pos('R-OHNE',Xml) = 0,'Reference without date sent');
+    Check(Pos('1899',Xml) = 0,'1899-12-30 sent');
+    Check(Pos('R-OHNE',LastError) > 0,'Reference without date not reported');
+    Cart.Order.OrderInfo.Referenzen.Clear;
+
     //Forbidden characters are removed and the document can be read again
     Check(Pos('<Langtext>abcdef'+#$D83D#$DE00+'g'#9'h</Langtext>',Xml) > 0,
           'Forbidden characters not removed');
@@ -105,6 +119,7 @@ var
   State: TIDSConnect.TCollectState;
   Merged: TIDSConnect_Warenkorb;
   LastError: String;
+  RolReports: Integer;
 begin
   BaseUrl := ParamStr(1);
   Check(BaseUrl <> '', 'Missing local mock URL');
@@ -115,6 +130,8 @@ begin
       begin
         Writeln('Diagnostic: '+Message);
         LastError := Message;
+        if Pos('ROL',Message) > 0 then
+          Inc(RolReports);
       end;
     Calls := 0;
     TIDSConnect.IDSCONNECT_ONRESPONSE :=
@@ -135,6 +152,11 @@ begin
 
     Check(not TIDSConnect.TryFetchResult(BaseUrl+'/invalid',Cart,Error),'Invalid XML accepted');
     Check((Error <> '') and (Body = '<Warenkorb>'),'Invalid payload not retained');
+    //A failed fetch keeps the caller's cart (WKS: the cart that was sent)
+    Check(Cart.Order.OrderItems.Count = 1,'Precondition: cart filled');
+    Check(not TIDSConnect.TryFetchResult(BaseUrl+'/invalid',Cart,Error),'Invalid XML accepted');
+    Check((Cart.Order.OrderItems.Count = 1) and (Cart.Order.OrderItems[0].ArtNo = 'A&B'),
+          'Failed fetch cleared the cart');
     Check(not TIDSConnect.TryFetchResult(BaseUrl+'/html',Cart,Error),'HTML accepted as cart');
     Check((Error <> '') and (Pos('<html>',Body) = 1),'HTML response missing');
     Check(not TIDSConnect.TryFetchResult(BaseUrl+'/error',Cart,Error),'HTTP 500 accepted');
@@ -166,6 +188,10 @@ begin
     Check(TIDSConnect.TryFetchResult(BaseUrl+'/ns',Cart,Error),'Namespace prefix rejected: '+Error);
     Check((Cart.Order.OrderItems.Count = 1) and (Cart.Order.OrderItems[0].ArtNo = 'NS1') and
           (Cart.Order.OrderInfo.Cur = 'CHF'),'Namespace prefix content lost');
+    LastError := '';
+    Check(TIDSConnect.TryFetchResult(BaseUrl+'/unknown-codes',Cart,Error),'Unknown codes rejected: '+Error);
+    Check(Cart.Order.OrderItems[0].QU = idsConnectQu_PCE,'Unknown unit: fallback changed');
+    Check(Pos('ROL',LastError) + Pos('XX',LastError) > 0,'Unknown code not reported: '+LastError);
     Check(TIDSConnect.TryFetchResult(BaseUrl+'/mixed-text',Cart,Error),'Mixed content rejected: '+Error);
     Check(Cart.Order.OrderItems[0].ArtNo = 'abc&de','Mixed content text: '+Cart.Order.OrderItems[0].ArtNo);
 
@@ -247,6 +273,13 @@ begin
       Check(TIDSConnect.CollectResults(BaseUrl+'/sticky-id',Merged,State),'Sticky id rejected');
       Check((State.Received = 1) and State.DuplicateReported,'Repeated id not detected');
 
+      //A repeated return with an unknown code is reported once, not per poll
+      State := Default(TIDSConnect.TCollectState);
+      RolReports := 0;
+      TIDSConnect.CollectResults(BaseUrl+'/sticky-unknown',Merged,State);
+      TIDSConnect.CollectResults(BaseUrl+'/sticky-unknown',Merged,State);
+      Check(RolReports = 1,'Unknown code reported per poll: '+IntToStr(RolReports));
+
       //Cyclic delivery A, B, A: the repeated A is detected
       State := Default(TIDSConnect.TCollectState);
       Check(TIDSConnect.CollectResults(BaseUrl+'/cycle',Merged,State),'Cycle not collected');
@@ -287,6 +320,23 @@ begin
 
     CheckSerializer(LastError);
     Writeln('PASS: serializer versions, dropped 2.5.1 fields, forbidden characters');
+    LastError := '';
+    TIDSConnect.IDSConnectADT('','c','u','p','x',TPath.GetTempPath);
+    Check(Pos('ADL',LastError) > 0,'ADT without URL silent');
+    LastError := '';
+    Check(not TIDSConnect.IDSConnectAS('https://shop.invalid/ids','c','u','p',TPath.GetTempPath,'',Cart),
+          'AS without search term accepted');
+    Check(Pos('Suchbegriff',LastError) > 0,'AS without search term silent');
+    LastError := '';
+    Check(not TIDSConnect.IDSConnectWKS('','c','u','p',TPath.GetTempPath,Cart),'WKS without URL accepted');
+    Check(Pos('WKS',LastError) > 0,'WKS without URL silent');
+    //Without credentials the request is prepared; here it fails only at the
+    //temp file (a directory), not at a credentials check
+    LastError := '';
+    TIDSConnect.IDSConnectWKE('https://shop.invalid/ids','','','',TPath.GetTempPath,Cart);
+    Check(Pos('temporaere Datei',LastError) > 0,'Empty credentials still block WKE: '+LastError);
+
+    Writeln('PASS: kept cart on failed fetch, unknown codes, missing input reported, empty credentials allowed');
     Writeln('PASS: response diagnostics, masked WKE request, selected and default versions for WKE/SV/LI, multiple-return queue/header/duplicates');
   finally
     TIDSConnect.IDSCONNECT_ONREQUEST := nil;

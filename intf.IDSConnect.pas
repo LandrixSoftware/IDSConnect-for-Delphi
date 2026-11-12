@@ -88,7 +88,8 @@ type
     class function TryFetchResult(const _Url : String;_Warenkorb : TIDSConnect_Warenkorb) : Boolean; overload;
     //Wie TryFetchResult, liefert zusaetzlich die Rohdaten der Antwort und die
     //Kennung der Uebertragung (Header X-IDSConnect-Id, leer, wenn der Server
-    //keine sendet)
+    //keine sendet). Mit _Warenkorb = nil wird nur heruntergeladen: true, wenn
+    //eine nicht leere Antwort mit HTTP 200 vorliegt.
     class function FetchResult(const _Url : String;_Warenkorb : TIDSConnect_Warenkorb;
                                out _Error : String; out _Raw : TBytes;
                                out _Id : String) : Boolean;
@@ -175,12 +176,16 @@ type
   TIDSConnectHelper = class(TObject)
   public
     class function RohstoffStrToRohstoff(const _Val: String): TIDSConnect_Rohstoff;
+    //false bei unbekanntem Code; _Rohstoff ist dann CU
+    class function TryRohstoffStrToRohstoff(const _Val: String; out _Rohstoff: TIDSConnect_Rohstoff): Boolean;
     class function RohstoffToRohstoffStr(const _Val: TIDSConnect_Rohstoff): String;
     class function StrToFloat(_Val: String; _Default: double): double;
     class function FloatToStr(const _Val: double; _Decimals: Integer): String;
     class function QuToQuStrInternal(const _Val: TIDSConnect_QU): String;
     class function QuToQuStr(const _Val: TIDSConnect_QU): String;
     class function QuStrToQu(const _Val: String): TIDSConnect_QU;
+    //false bei unbekanntem Code; _Qu ist dann PCE
+    class function TryQuStrToQu(const _Val: String; out _Qu: TIDSConnect_QU): Boolean;
     class function DateStrToDate(const _Val : String) : TDate;
     class function TimeStrToTime(const _Val : String) : TTime;
     class function DateToDateStr(const _Val : TDate) : String;
@@ -343,6 +348,19 @@ begin
     Result := 0;
 end;
 
+//Liest eine Mengeneinheit. Ein unbekannter Code wurde frueher still zu PCE -
+//aus 100 Rollen ("ROL") wurden so 100 Stueck. Der Ersatzwert bleibt, damit
+//das Datenmodell gefuellt ist, aber der Aufrufer erfaehrt davon.
+function ReadQu(const _Text, _Where : String) : TIDSConnect_QU;
+var
+  lText : String;
+begin
+  lText := Trim(_Text);
+  if (not TIDSConnectHelper.TryQuStrToQu(lText,Result)) and (lText <> '') then
+    TIDSConnect.ReportError(Format('Unbekannte Mengeneinheit "%s" (%s); als PCE (Stück) übernommen.',
+                            [lText,_Where]),nil);
+end;
+
 //Stellt die XML-Deklaration eines bereits dekodierten Strings auf UTF-8 um
 function XmlDeclToUtf8(const _Xml : String) : String;
 var
@@ -415,37 +433,52 @@ end;
 
 class function TIDSConnectHelper.RohstoffStrToRohstoff(const _Val: String): TIDSConnect_Rohstoff;
 begin
-  if SameText('AL',_Val) then
-    Result := TIDSConnect_Rohstoff.idsConnectR_AL else
-  if SameText('PB',_Val) then
-    Result := TIDSConnect_Rohstoff.idsConnectR_PB else
-  if SameText('CR',_Val) then
-    Result := TIDSConnect_Rohstoff.idsConnectR_CR else
-  if SameText('AU',_Val) then
-    Result := TIDSConnect_Rohstoff.idsConnectR_AU else
-  if SameText('CD',_Val) then
-    Result := TIDSConnect_Rohstoff.idsConnectR_CD else
-  if SameText('CU',_Val) then
-    Result := TIDSConnect_Rohstoff.idsConnectR_CU else
-  if SameText('MG',_Val) then
-    Result := TIDSConnect_Rohstoff.idsConnectR_MG else
-  if SameText('NI',_Val) then
-    Result := TIDSConnect_Rohstoff.idsConnectR_NI else
-  if SameText('PL',_Val) then
-    Result := TIDSConnect_Rohstoff.idsConnectR_PL else
-  if SameText('AG',_Val) then
-    Result := TIDSConnect_Rohstoff.idsConnectR_AG else
-  if SameText('W',_Val) then
-    Result := TIDSConnect_Rohstoff.idsConnectR_W else
-  if SameText('ZN',_Val) then
-    Result := TIDSConnect_Rohstoff.idsConnectR_ZN else
-  if SameText('SN',_Val) then
-    Result := TIDSConnect_Rohstoff.idsConnectR_SN else
-  if SameText('MS',_Val) then
-    Result := TIDSConnect_Rohstoff.idsConnectR_MS else
-  if SameText('MK',_Val) then
-    Result := TIDSConnect_Rohstoff.idsConnectR_MK else
-    Result := TIDSConnect_Rohstoff.idsConnectR_CU;
+  TryRohstoffStrToRohstoff(_Val,Result);
+end;
+
+class function TIDSConnectHelper.TryRohstoffStrToRohstoff(const _Val: String;
+  out _Rohstoff: TIDSConnect_Rohstoff): Boolean;
+var
+  lVal : String;
+  lRes : TIDSConnect_Rohstoff;
+begin
+  lVal := Trim(_Val);
+  Result := true;
+  if SameText('AL',lVal) then
+    lRes := TIDSConnect_Rohstoff.idsConnectR_AL else
+  if SameText('PB',lVal) then
+    lRes := TIDSConnect_Rohstoff.idsConnectR_PB else
+  if SameText('CR',lVal) then
+    lRes := TIDSConnect_Rohstoff.idsConnectR_CR else
+  if SameText('AU',lVal) then
+    lRes := TIDSConnect_Rohstoff.idsConnectR_AU else
+  if SameText('CD',lVal) then
+    lRes := TIDSConnect_Rohstoff.idsConnectR_CD else
+  if SameText('CU',lVal) then
+    lRes := TIDSConnect_Rohstoff.idsConnectR_CU else
+  if SameText('MG',lVal) then
+    lRes := TIDSConnect_Rohstoff.idsConnectR_MG else
+  if SameText('NI',lVal) then
+    lRes := TIDSConnect_Rohstoff.idsConnectR_NI else
+  if SameText('PL',lVal) then
+    lRes := TIDSConnect_Rohstoff.idsConnectR_PL else
+  if SameText('AG',lVal) then
+    lRes := TIDSConnect_Rohstoff.idsConnectR_AG else
+  if SameText('W',lVal) then
+    lRes := TIDSConnect_Rohstoff.idsConnectR_W else
+  if SameText('ZN',lVal) then
+    lRes := TIDSConnect_Rohstoff.idsConnectR_ZN else
+  if SameText('SN',lVal) then
+    lRes := TIDSConnect_Rohstoff.idsConnectR_SN else
+  if SameText('MS',lVal) then
+    lRes := TIDSConnect_Rohstoff.idsConnectR_MS else
+  if SameText('MK',lVal) then
+    lRes := TIDSConnect_Rohstoff.idsConnectR_MK else
+  begin
+    lRes := TIDSConnect_Rohstoff.idsConnectR_CU;
+    Result := false;
+  end;
+  _Rohstoff := lRes;
 end;
 
 class function TIDSConnectHelper.RohstoffToRohstoffStr(const _Val: TIDSConnect_Rohstoff): String;
@@ -768,41 +801,56 @@ end;
 
 class function TIDSConnectHelper.QuStrToQu(const _Val: String): TIDSConnect_QU;
 begin
-  if SameText('CMQ',_Val) then
-    Result := TIDSConnect_QU.idsConnectQu_CMQ else
-  if SameText('CMK',_Val) then
-    Result := TIDSConnect_QU.idsConnectQu_CMK else
-  if SameText('CMT',_Val) then
-    Result := TIDSConnect_QU.idsConnectQu_CMT else
-  if SameText('DZN',_Val) then
-    Result := TIDSConnect_QU.idsConnectQu_DZN else
-  if SameText('GRM',_Val) then
-    Result := TIDSConnect_QU.idsConnectQu_GRM else
-  if SameText('HLT',_Val) then
-    Result := TIDSConnect_QU.idsConnectQu_HLT else
-  if SameText('KGM',_Val) then
-    Result := TIDSConnect_QU.idsConnectQu_KGM else
-  if SameText('KTM',_Val) then
-    Result := TIDSConnect_QU.idsConnectQu_KTM else
-  if SameText('LTR',_Val) then
-    Result := TIDSConnect_QU.idsConnectQu_LTR else
-  if SameText('MMT',_Val) then
-    Result := TIDSConnect_QU.idsConnectQu_MMT else
-  if SameText('MTK',_Val) then
-    Result := TIDSConnect_QU.idsConnectQu_MTK else
-  if SameText('MTQ',_Val) then
-    Result := TIDSConnect_QU.idsConnectQu_MTQ else
-  if SameText('MTR',_Val) then
-    Result := TIDSConnect_QU.idsConnectQu_MTR else
-  if SameText('PCE',_Val) then
-    Result := TIDSConnect_QU.idsConnectQu_PCE else
-  if SameText('PR',_Val) then
-    Result := TIDSConnect_QU.idsConnectQu_PR else
-  if SameText('SET',_Val) then
-    Result := TIDSConnect_QU.idsConnectQu_SET else
-  if SameText('TNE',_Val) then
-    Result := TIDSConnect_QU.idsConnectQu_TNE else
-    Result := TIDSConnect_QU.idsConnectQu_PCE;
+  TryQuStrToQu(_Val,Result);
+end;
+
+class function TIDSConnectHelper.TryQuStrToQu(const _Val: String;
+  out _Qu: TIDSConnect_QU): Boolean;
+var
+  lVal : String;
+  lRes : TIDSConnect_QU;
+begin
+  lVal := Trim(_Val);
+  Result := true;
+  if SameText('CMQ',lVal) then
+    lRes := TIDSConnect_QU.idsConnectQu_CMQ else
+  if SameText('CMK',lVal) then
+    lRes := TIDSConnect_QU.idsConnectQu_CMK else
+  if SameText('CMT',lVal) then
+    lRes := TIDSConnect_QU.idsConnectQu_CMT else
+  if SameText('DZN',lVal) then
+    lRes := TIDSConnect_QU.idsConnectQu_DZN else
+  if SameText('GRM',lVal) then
+    lRes := TIDSConnect_QU.idsConnectQu_GRM else
+  if SameText('HLT',lVal) then
+    lRes := TIDSConnect_QU.idsConnectQu_HLT else
+  if SameText('KGM',lVal) then
+    lRes := TIDSConnect_QU.idsConnectQu_KGM else
+  if SameText('KTM',lVal) then
+    lRes := TIDSConnect_QU.idsConnectQu_KTM else
+  if SameText('LTR',lVal) then
+    lRes := TIDSConnect_QU.idsConnectQu_LTR else
+  if SameText('MMT',lVal) then
+    lRes := TIDSConnect_QU.idsConnectQu_MMT else
+  if SameText('MTK',lVal) then
+    lRes := TIDSConnect_QU.idsConnectQu_MTK else
+  if SameText('MTQ',lVal) then
+    lRes := TIDSConnect_QU.idsConnectQu_MTQ else
+  if SameText('MTR',lVal) then
+    lRes := TIDSConnect_QU.idsConnectQu_MTR else
+  if SameText('PCE',lVal) then
+    lRes := TIDSConnect_QU.idsConnectQu_PCE else
+  if SameText('PR',lVal) then
+    lRes := TIDSConnect_QU.idsConnectQu_PR else
+  if SameText('SET',lVal) then
+    lRes := TIDSConnect_QU.idsConnectQu_SET else
+  if SameText('TNE',lVal) then
+    lRes := TIDSConnect_QU.idsConnectQu_TNE else
+  begin
+    lRes := TIDSConnect_QU.idsConnectQu_PCE;
+    Result := false;
+  end;
+  _Qu := lRes;
 end;
 
 { TIDSConnect_WarenkorbHelper }
@@ -1227,7 +1275,7 @@ begin
     end;
     if SameText(_Node.Children[i].LocalName,'QU') then
     begin
-      itm.QU := TIDSConnectHelper.QuStrToQu(NodeText(_Node.Children[i]));
+      itm.QU := ReadQu(NodeText(_Node.Children[i]),Format('Position %d',[_Obj.Count]));
       continue;
     end;
     if SameText(_Node.Children[i].LocalName,'Kurztext') then
@@ -1366,6 +1414,7 @@ function TIDSConnect_WarenkorbHelper.idsRohstoffanteil(_Node: TLandrixXmlNode;
 var
   i : Integer;
   itm : TIDSConnect_Rohstoffanteil;
+  lText : String;
 begin
   Result := true;
   itm := _Obj.AddItem;
@@ -1376,7 +1425,10 @@ begin
 
     if SameText(_Node.Children[i].LocalName,'Rohstoff') then
     begin
-      itm.Rohstoff := TIDSConnectHelper.RohstoffStrToRohstoff(NodeText(_Node.Children[i]));
+      lText := Trim(NodeText(_Node.Children[i]));
+      if (not TIDSConnectHelper.TryRohstoffStrToRohstoff(lText,itm.Rohstoff)) and (lText <> '') then
+        TIDSConnect.ReportError(Format('Unbekannter Rohstoff "%s" in einem Rohstoffanteil; als CU (Kupfer) übernommen.',
+                                [lText]),nil);
       continue;
     end;
     if SameText(_Node.Children[i].LocalName,'Gewichtsanteilswert') then
@@ -1386,7 +1438,7 @@ begin
     end;
     if SameText(_Node.Children[i].LocalName,'Gewichtsanteilseinheit') then
     begin
-      itm.Gewichtsanteilseinheit := TIDSConnectHelper.QuStrToQu(NodeText(_Node.Children[i]));
+      itm.Gewichtsanteilseinheit := ReadQu(NodeText(_Node.Children[i]),'Gewichtsanteilseinheit eines Rohstoffanteils');
       continue;
     end;
     if SameText(_Node.Children[i].LocalName,'Basiswert') then
@@ -1396,7 +1448,7 @@ begin
     end;
     if SameText(_Node.Children[i].LocalName,'Basiseinheit') then
     begin
-      itm.Basiseinheit := TIDSConnectHelper.QuStrToQu(NodeText(_Node.Children[i]));
+      itm.Basiseinheit := ReadQu(NodeText(_Node.Children[i]),'Basiseinheit eines Rohstoffanteils');
       continue;
     end;
     if SameText(_Node.Children[i].LocalName,'Basisnotierung') then
@@ -1537,10 +1589,14 @@ var
   lBuffer : TLandrixXmlDocument;
   lBytes : TBytes;
   lXml : String;
+  lCart : TIDSConnect_Warenkorb;
 begin
   Result := false;
-  Clear;
-
+  //Frueher wurde hier zuerst Clear aufgerufen: scheiterte das Einlesen, war
+  //der Warenkorb des Aufrufers leer - bei WKS also der gesendete Warenkorb.
+  //Jetzt wird in einen eigenen Warenkorb gelesen und nur bei Erfolg
+  //uebernommen.
+  lCart := nil;
   lBuffer := TLandrixXmlDocument.Create;
   try
   try
@@ -1559,7 +1615,12 @@ begin
       exit;
 
     if SameText(lBuffer.Root.LocalName,'Warenkorb') then
-      Result := idsWarenkorb(lBuffer.Root)
+    begin
+      lCart := TIDSConnect_Warenkorb.Create;
+      Result := lCart.idsWarenkorb(lBuffer.Root);
+      if Result then
+        Assign(lCart);
+    end;
   except
     on E:Exception do
     begin
@@ -1569,6 +1630,7 @@ begin
     end;
   end;
   finally
+    lCart.Free;
     lBuffer.Free;
   end;
 end;
@@ -1642,6 +1704,13 @@ var
   begin
     if (_Obj.ReferenzNumber = '') or (_Obj.ReferenzType = idsConnectRefType_None) then
       exit;
+    //Das Belegdatum ist ein Muss-Feld; ohne Datum entstand frueher 1899-12-30
+    if _Obj.ReferenzDate = 0 then
+    begin
+      TIDSConnect.ReportError(Format('Die Referenz %s (Belegart %s) hat kein Belegdatum und wurde nicht gesendet.',
+                              [_Obj.ReferenzNumber,TIDSConnectHelper.ReferenzTypeToStr(_Obj.ReferenzType)]),nil);
+      exit;
+    end;
     _Val.Append(_Indent+'<Referenz>'+#13#10);
     _Val.AppendFormat(_Indent+' <ReferenzNumber>%s</ReferenzNumber>'+#13#10,[TIDSConnectHelper.XmlText(_Obj.ReferenzNumber,15)]);
     _Val.AppendFormat(_Indent+' <ReferenzDate>%s</ReferenzDate>'+#13#10,[TIDSConnectHelper.DateToDateStr(_Obj.ReferenzDate)]);
@@ -2136,6 +2205,12 @@ var
   lRaw : TBytes;
   lId : String;
 begin
+  //FetchResult laedt ohne Warenkorb nur herunter - hier gibt es ohne
+  //Warenkorb nichts einzulesen
+  Result := false;
+  _Error := '';
+  if _Warenkorb = nil then
+    exit;
   Result := FetchResult(_Url,_Warenkorb,_Error,lRaw,lId);
 end;
 
@@ -2152,7 +2227,7 @@ begin
   _Error := '';
   _Raw := nil;
   _Id := '';
-  if (_Url = '') or (_Warenkorb = nil) then
+  if _Url = '' then
     exit;
 
   str := TMemoryStream.Create;
@@ -2188,6 +2263,11 @@ begin
       if str.Size = 0 then
         exit;
       _Id := Trim(res.HeaderValue['X-IDSConnect-Id']);
+      if _Warenkorb = nil then
+      begin
+        Result := true;
+        exit;
+      end;
       Result := _Warenkorb.LoadFromStream(str);
       if not Result then
         _Error := 'Die Rückgabe konnte nicht als Warenkorb eingelesen werden.';
@@ -2252,7 +2332,19 @@ var
   lError, lId, lSeen : String;
   lRaw : TBytes;
   i : Integer;
-  lDuplicate : Boolean;
+  lDuplicate, lParsed : Boolean;
+  lStream : TBytesStream;
+
+  //Kennung bzw. Rohdaten merken - auch bei einer Rueckgabe, die nicht
+  //eingelesen werden konnte, damit ihre Wiederholung als Dublette gilt
+  procedure Remember;
+  begin
+    if lId <> '' then
+      _State.SeenIds := _State.SeenIds + [lId];
+    _State.LastHadId := lId <> '';
+    _State.LastRaw := lRaw;
+  end;
+
 begin
   Result := false;
   _State.LimitReached := false;
@@ -2260,7 +2352,7 @@ begin
     exit;
   if _State.Received = 0 then
     _Warenkorb.Clear;
-  //LoadFromStream leert den Zielwarenkorb, deshalb wird ueber einen
+  //LoadFromStream ersetzt den Zielwarenkorb, deshalb wird ueber einen
   //Zwischenpuffer gelesen und anschliessend zusammengefuehrt.
   lBuffer := TIDSConnect_Warenkorb.Create;
   try
@@ -2268,7 +2360,10 @@ begin
     //die Rueckgabe beim Abruf nicht verbraucht
     for i := 1 to IDSCONNECT_MAX_COLLECT do
     begin
-      if not FetchResult(_Url,lBuffer,lError,lRaw,lId) then
+      //Erst nur herunterladen und auf Dublette pruefen, dann einlesen: sonst
+      //kaemen Meldungen des Parsers (z. B. unbekannte Mengeneinheit) bei einem
+      //Server, der dieselbe Rueckgabe wiederholt, bei jedem Abruf neu
+      if not FetchResult(_Url,nil,lError,lRaw,lId) then
       begin
         if (lError <> '') and (not _State.ErrorReported) then
         begin
@@ -2285,8 +2380,8 @@ begin
       lDuplicate := false;
       if lId <> '' then
       begin
-        //Mit Kennung gegen alle bereits uebernommenen pruefen - ein Server,
-        //der zyklisch ausliefert (A, B, A), wird so ebenfalls erkannt
+        //Mit Kennung gegen alle bereits gesehenen pruefen - ein Server, der
+        //zyklisch ausliefert (A, B, A), wird so ebenfalls erkannt
         for lSeen in _State.SeenIds do
           if lSeen = lId then
           begin
@@ -2296,7 +2391,7 @@ begin
       end else
       //Ohne Kennung: mit der letzten Rueckgabe vergleichen, sofern auch diese
       //keine Kennung hatte
-      if (_State.Received > 0) and (not _State.LastHadId) then
+      if (_State.LastRaw <> nil) and (not _State.LastHadId) then
         lDuplicate := (Length(lRaw) = Length(_State.LastRaw)) and
                       CompareMem(PByte(lRaw),PByte(_State.LastRaw),Length(lRaw));
       if lDuplicate then
@@ -2309,11 +2404,25 @@ begin
         end;
         exit;
       end;
+
+      lStream := TBytesStream.Create(lRaw);
+      try
+        lParsed := lBuffer.LoadFromStream(lStream);
+      finally
+        lStream.Free;
+      end;
+      Remember;
+      if not lParsed then
+      begin
+        //Die Einzelheiten hat LoadFromStream bereits gemeldet
+        if not _State.ErrorReported then
+        begin
+          _State.ErrorReported := true;
+          ReportError('Die Rückgabe von '+_Url+' konnte nicht als Warenkorb eingelesen werden.',nil);
+        end;
+        exit;
+      end;
       MergeOrderItems(lBuffer,_Warenkorb,_State.Received = 0);
-      if lId <> '' then
-        _State.SeenIds := _State.SeenIds + [lId];
-      _State.LastHadId := lId <> '';
-      _State.LastRaw := lRaw;
       Inc(_State.Received);
       Result := true;
     end;
@@ -2523,12 +2632,20 @@ class procedure TIDSConnect.IDSConnectADT(const _ServiceURL, _Cst, _UN, _Pwd,
 var
   hstrl : TStringList;
 begin
+  //Frueher brachen ADT, AS und WKS hier ohne jede Meldung ab
   if _ServiceURL.IsEmpty then
+  begin
+    ReportError('ADL: Die Shop-Adresse fehlt.',nil);
     exit;
-  if _Cst.IsEmpty and _UN.IsEmpty and _Pwd.IsEmpty then
-    exit;
+  end;
+  //Fehlende Anmeldedaten sind kein Abbruchgrund mehr: welche ein Shop
+  //braucht, sagt die Abfrage LI, und manche Shops (z. B. eine offene
+  //Artikelsuche) brauchen keine. Der Shop lehnt fehlende Daten selbst ab.
   if _ArtNr = '' then
+  begin
+    ReportError('ADL: Die Artikelnummer fehlt.',nil);
     exit;
+  end;
   hstrl := TStringList.Create;
   try
     hstrl.Add('<!doctype html>');
@@ -2558,15 +2675,28 @@ var
 begin
   Result := false;
   if _ServiceURL.IsEmpty then
+  begin
+    ReportError('AS: Die Shop-Adresse fehlt.',nil);
     exit;
-  if _Cst.IsEmpty and _UN.IsEmpty and _Pwd.IsEmpty then
-    exit;
+  end;
+  //Fehlende Anmeldedaten sind kein Abbruchgrund mehr: welche ein Shop
+  //braucht, sagt die Abfrage LI, und manche Shops (z. B. eine offene
+  //Artikelsuche) brauchen keine. Der Shop lehnt fehlende Daten selbst ab.
   if TIDSConnect.IDSCONNECT_HOOKURL = '' then
+  begin
+    ReportError('AS: Die Hook-URL fehlt.',nil);
     exit;
+  end;
   if _SearchString = '' then
+  begin
+    ReportError('AS: Der Suchbegriff fehlt.',nil);
     exit;
+  end;
   if _Warenkorb = nil then
+  begin
+    ReportError('AS: Es ist kein Warenkorb für das Ergebnis übergeben.',nil);
     exit;
+  end;
 
   if _Version < idsConnectVersion_2_5_1 then
     _MultipleResult := false;
@@ -2611,18 +2741,19 @@ begin
     ReportError('WKE: Die Shop-Adresse fehlt.',nil);
     exit;
   end;
-  if _Cst.IsEmpty and _UN.IsEmpty and _Pwd.IsEmpty then
-  begin
-    ReportError('WKE: Es sind keine Anmeldedaten eingetragen.',nil);
-    exit;
-  end;
+  //Fehlende Anmeldedaten sind kein Abbruchgrund mehr: welche ein Shop
+  //braucht, sagt die Abfrage LI, und manche Shops (z. B. eine offene
+  //Artikelsuche) brauchen keine. Der Shop lehnt fehlende Daten selbst ab.
   if TIDSConnect.IDSCONNECT_HOOKURL = '' then
   begin
     ReportError('WKE: Die Hook-URL fehlt.',nil);
     exit;
   end;
   if _Warenkorb = nil then
+  begin
+    ReportError('WKE: Es ist kein Warenkorb für das Ergebnis übergeben.',nil);
     exit;
+  end;
 
   sid := TIDSConnect.GetUuid;
   hstrl := TStringList.Create;
@@ -2663,20 +2794,33 @@ var
 begin
   Result := false;
   if _ServiceURL.IsEmpty then
+  begin
+    ReportError('WKS: Die Shop-Adresse fehlt.',nil);
     exit;
-  if _Cst.IsEmpty and _UN.IsEmpty and _Pwd.IsEmpty then
-    exit;
+  end;
+  //Fehlende Anmeldedaten sind kein Abbruchgrund mehr: welche ein Shop
+  //braucht, sagt die Abfrage LI, und manche Shops (z. B. eine offene
+  //Artikelsuche) brauchen keine. Der Shop lehnt fehlende Daten selbst ab.
   if TIDSConnect.IDSCONNECT_HOOKURL = '' then
+  begin
+    ReportError('WKS: Die Hook-URL fehlt.',nil);
     exit;
+  end;
   if _Warenkorb = nil then
+  begin
+    ReportError('WKS: Es ist kein Warenkorb übergeben.',nil);
     exit;
+  end;
 
   sid := TIDSConnect.GetUuid;
   hstr := TStringBuilder.Create;
   hstrl := TStringList.Create;
   try
     if not _Warenkorb.SaveToString(hstr) then
+    begin
+      ReportError('WKS: Der Warenkorb konnte nicht als XML erzeugt werden.',nil);
       exit;
+    end;
     hstrl.Add('<!doctype html>');
     hstrl.Add(BuildFormHeader('WKS'));
     hstrl.Add('<body onload="document.forms[''wks''].submit();">');
@@ -2694,11 +2838,12 @@ begin
     hstrl.Add('<textarea cols="1" rows="1" name="warenkorb">'+#13#10+
               TIDSConnectHelper.HtmlEscape(hstr.ToString)+#13#10+'</textarea>');
     hstrl.Add(HiddenField('action','WKS',3));
-    if not _DontWait then
-      hstrl.Add(HiddenField('hookurl',HookUrlWithSid(sid),256));
+    //Laut Spezifikation muss die Hook-URL "in jedem Fall mitgesendet werden" -
+    //frueher fehlte sie bei _DontWait. Dann wird nur nicht auf die
+    //Rueckuebertragung gewartet.
+    hstrl.Add(HiddenField('hookurl',HookUrlWithSid(sid),256));
     hstrl.Add('</form></body></html>');
     //Leerer Dateiname bedeutet: im integrierten Browser anzeigen.
-    //Bei _DontWait wird keine Rueckuebertragung erwartet.
     if _DontWait then
       Result := ShowFormAndFetch(hstrl,_TmpFilename,'',nil,0)
     else

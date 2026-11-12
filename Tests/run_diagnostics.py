@@ -42,6 +42,9 @@ RESPONSES = {
                   '<ids:OrderInfo><ids:Cur>CHF</ids:Cur></ids:OrderInfo>'
                   '<ids:OrderItem><ids:ArtNo>NS1</ids:ArtNo><ids:Qty>3</ids:Qty>'
                   '<ids:QU>PCE</ids:QU></ids:OrderItem></ids:Order></ids:Warenkorb>').encode()),
+    # Codes outside the code lists
+    '/unknown-codes': (200, CART.replace('<QU>PCE</QU>',
+                       '<QU>ROL</QU><Rohstoffanteil><Rohstoff>XX</Rohstoff></Rohstoffanteil>').encode()),
     # Text, CDATA and a comment in one element
     '/mixed-text': (200, CART.replace('<ArtNo>A&amp;B</ArtNo>',
                     '<ArtNo>ab<![CDATA[c&d]]><!--x-->e</ArtNo>').encode()),
@@ -105,6 +108,8 @@ class Handler(BaseHTTPRequestHandler):
             status, body = (200, QUEUE.pop(0)) if QUEUE else (404, b'')
         elif self.path == '/sticky':
             status, body = 200, CART.encode()
+        elif self.path == '/sticky-unknown':
+            status, body = 200, CART.replace('<QU>PCE</QU>', '<QU>ROL</QU>').encode()
         elif self.path == '/sticky-id':
             status, body, transfer_id = 200, CART.encode(), 'same-id'
         elif self.path in ('/id-queue', '/many', '/cycle', '/mixed'):

@@ -171,7 +171,7 @@ TIDSConnect.IDSCONNECT_MULTIPLERESULT_FOLLOWUP := 0;
 Wer den Ablauf selbst steuern will, holt die aufgelaufenen Rückgaben mit
 `TIDSConnect.CollectResults` ab oder führt sie mit
 `TIDSConnect.MergeOrderItems(_Quelle,_Ziel,_MitKopfdaten)` zusammen — nötig,
-weil `LoadFromStream` den Zielwarenkorb vor dem Einlesen leert.
+weil `LoadFromStream` den Zielwarenkorb ersetzt.
 
 ## Rücksprungadresse (Hook-URL)
 
@@ -228,6 +228,25 @@ TIDSConnect.IDSCONNECT_ONERROR :=
     //protokollieren oder anzeigen
   end;
 ```
+
+Gemeldet werden außerdem:
+
+* fehlende Angaben, bevor ein Aufruf abbricht (Shop-Adresse, Hook-URL,
+  Suchbegriff, Artikelnummer, Warenkorb). Fehlende Anmeldedaten sind kein
+  Abbruchgrund: Welche ein Shop braucht, liefert `IDSConnectLI`, und der Shop
+  lehnt fehlende Daten selbst ab;
+* unbekannte Mengeneinheiten und Rohstoffe in einer Rückgabe, mit dem
+  Originalwert. Übernommen werden sie als `PCE` bzw. `CU` – wer den Fall
+  fachlich behandeln will, wertet die Meldung aus;
+* Referenzen ohne Belegdatum (Muss-Feld); sie werden nicht gesendet;
+* beim Senden als 2.5.1 Felder, die es dort nicht mehr gibt (siehe oben).
+
+Scheitert das Einlesen einer Rückgabe, bleibt der übergebene Warenkorb
+unverändert – bei WKS also der gesendete Warenkorb.
+
+`IDSConnectWKS` sendet die Hook-URL immer mit, wie die Spezifikation es
+verlangt; mit `_DontWait = True` wird nur nicht auf die Rückübertragung
+gewartet.
 
 Für Testumgebungen mit selbstsignierten Zertifikaten lässt sich die
 Zertifikatsprüfung gezielt abschalten — im Normalbetrieb bleibt die Prüfung des
