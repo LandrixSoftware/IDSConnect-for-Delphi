@@ -1068,6 +1068,311 @@ begin
   _Qu := lRes;
 end;
 
+//HTML-Namen fuer U+00A0 bis U+00FF in Codereihenfolge
+const
+  HtmlLatin1Names : array[160..255] of String = (
+    'nbsp','iexcl','cent','pound','curren','yen','brvbar','sect','uml','copy',
+    'ordf','laquo','not','shy','reg','macr','deg','plusmn','sup2','sup3',
+    'acute','micro','para','middot','cedil','sup1','ordm','raquo','frac14','frac12',
+    'frac34','iquest','Agrave','Aacute','Acirc','Atilde','Auml','Aring','AElig','Ccedil',
+    'Egrave','Eacute','Ecirc','Euml','Igrave','Iacute','Icirc','Iuml','ETH','Ntilde',
+    'Ograve','Oacute','Ocirc','Otilde','Ouml','times','Oslash','Ugrave','Uacute','Ucirc',
+    'Uuml','Yacute','THORN','szlig','agrave','aacute','acirc','atilde','auml','aring',
+    'aelig','ccedil','egrave','eacute','ecirc','euml','igrave','iacute','icirc','iuml',
+    'eth','ntilde','ograve','oacute','ocirc','otilde','ouml','divide','oslash','ugrave',
+    'uacute','ucirc','uuml','yacute','thorn','yuml');
+
+//Codepunkt eines HTML-Namens, 0 wenn unbekannt (Gross-/Kleinschreibung zaehlt:
+//Auml ist A-Umlaut, auml a-Umlaut)
+function HtmlEntityCode(const _Name : String) : Integer;
+var
+  i : Integer;
+begin
+  for i := Low(HtmlLatin1Names) to High(HtmlLatin1Names) do
+    if HtmlLatin1Names[i] = _Name then
+      exit(i);
+  if _Name = 'euro' then exit($20AC);
+  if _Name = 'ndash' then exit($2013);
+  if _Name = 'mdash' then exit($2014);
+  if _Name = 'lsquo' then exit($2018);
+  if _Name = 'rsquo' then exit($2019);
+  if _Name = 'sbquo' then exit($201A);
+  if _Name = 'ldquo' then exit($201C);
+  if _Name = 'rdquo' then exit($201D);
+  if _Name = 'bdquo' then exit($201E);
+  if _Name = 'bull' then exit($2022);
+  if _Name = 'hellip' then exit($2026);
+  if _Name = 'trade' then exit($2122);
+  Result := 0;
+end;
+
+//Ersetzt HTML-Entitaeten (&auml; ...) durch Zeichenreferenzen. Die fuenf
+//XML-Entitaeten und CDATA-Abschnitte bleiben unberuehrt.
+function RepairHtmlEntities(const _Xml : String; out _Changed : Boolean) : String;
+var
+  i, j, lCode : Integer;
+  lName : String;
+  sb : TStringBuilder;
+begin
+  _Changed := false;
+  sb := TStringBuilder.Create(Length(_Xml));
+  try
+    i := 1;
+    while i <= Length(_Xml) do
+    begin
+      if (_Xml[i] = '<') and (Copy(_Xml,i,9) = '<![CDATA[') then
+      begin
+        j := PosEx(']]>',_Xml,i+9);
+        if j = 0 then
+          j := Length(_Xml)+1
+        else
+          j := j+3;
+        sb.Append(Copy(_Xml,i,j-i));
+        i := j;
+        continue;
+      end;
+      if _Xml[i] = '&' then
+      begin
+        j := i+1;
+        while (j <= Length(_Xml)) and (j-i <= 10) and CharInSet(_Xml[j],['A'..'Z','a'..'z','0'..'9']) do
+          Inc(j);
+        if (j <= Length(_Xml)) and (_Xml[j] = ';') and (j > i+1) then
+        begin
+          lName := Copy(_Xml,i+1,j-i-1);
+          lCode := HtmlEntityCode(lName);
+          if lCode > 0 then
+          begin
+            sb.Append('&#').Append(lCode).Append(';');
+            _Changed := true;
+            i := j+1;
+            continue;
+          end;
+        end;
+      end;
+      sb.Append(_Xml[i]);
+      Inc(i);
+    end;
+    Result := sb.ToString;
+  finally
+    sb.Free;
+  end;
+end;
+
+function IsXmlSpace(_C : Char) : Boolean;
+begin
+  Result := CharInSet(_C,[#9,#10,#13,' ']);
+end;
+
+//Ende eines Tags ab _Start ('<'): Position des schliessenden '>' ausserhalb
+//von Anfuehrungszeichen, 0 wenn keines
+function FindTagEnd(const _Xml : String; _Start : Integer) : Integer;
+var
+  lQuote, lPrev : Char;
+begin
+  lQuote := #0;
+  lPrev := #0;
+  Result := _Start+1;
+  while Result <= Length(_Xml) do
+  begin
+    if lQuote <> #0 then
+    begin
+      if _Xml[Result] = lQuote then
+        lQuote := #0;
+    end
+    //Ein Anfuehrungszeichen oeffnet nur direkt nach '=' (ggf. mit Leerraum);
+    //ein Apostroph mitten in einem ungequoteten Wert (O'Reilly) zaehlt nicht
+    else if CharInSet(_Xml[Result],['"','''']) and (lPrev = '=') then
+      lQuote := _Xml[Result]
+    else if _Xml[Result] = '>' then
+      exit;
+    if not IsXmlSpace(_Xml[Result]) then
+      lPrev := _Xml[Result];
+    Inc(Result);
+  end;
+  Result := 0;
+end;
+
+//Erste Position hinter einem Kommentar, einer Verarbeitungsanweisung oder
+//einer DOCTYPE-Angabe ab _Start ('<'); 0 wenn nicht abgeschlossen
+function SkipMarkup(const _Xml : String; _Start : Integer) : Integer;
+var
+  i, lDepth : Integer;
+  lQuote : Char;
+begin
+  if Copy(_Xml,_Start,4) = '<!--' then
+  begin
+    Result := PosEx('-->',_Xml,_Start+4);
+    if Result > 0 then
+      Inc(Result,3);
+    exit;
+  end;
+  if Copy(_Xml,_Start,2) = '<?' then
+  begin
+    Result := PosEx('?>',_Xml,_Start+2);
+    if Result > 0 then
+      Inc(Result,2);
+    exit;
+  end;
+  //<!DOCTYPE ...> mit Anfuehrungszeichen und internem Teil [ ... ]
+  lQuote := #0;
+  lDepth := 0;
+  i := _Start+2;
+  while i <= Length(_Xml) do
+  begin
+    //Kommentare und Verarbeitungsanweisungen im internen Teil ueberspringen -
+    //ein Apostroph darin ist kein Anfuehrungszeichen
+    if (lQuote = #0) and (lDepth > 0) and
+       ((Copy(_Xml,i,4) = '<!--') or (Copy(_Xml,i,2) = '<?')) then
+    begin
+      i := SkipMarkup(_Xml,i);
+      if i = 0 then
+        exit(0);
+      continue;
+    end;
+    if lQuote <> #0 then
+    begin
+      if _Xml[i] = lQuote then
+        lQuote := #0;
+    end
+    else if CharInSet(_Xml[i],['"','''']) then
+      lQuote := _Xml[i]
+    else if _Xml[i] = '[' then
+      Inc(lDepth)
+    else if _Xml[i] = ']' then
+      Dec(lDepth)
+    else if (_Xml[i] = '>') and (lDepth <= 0) then
+      exit(i+1);
+    Inc(i);
+  end;
+  Result := 0;
+end;
+
+//Setzt Anfuehrungszeichen um ungequotete Attributwerte eines Tags (ohne das
+//schliessende '>' bzw. '?>'). Gequotete Werte bleiben unveraendert, auch mit
+//'=', '?' oder '>' darin. Ein ungequoteter Wert endet an Leerraum oder am
+//Tag-Ende; ein '/' am Ende gehoert zum Wert - das Wurzelelement eines
+//Warenkorbs ist nie leer, und in echten Rueckgaben endet so die
+//Namensraum-Adresse (xmlns=http://.../Warenkorb/).
+function QuoteBareAttributes(const _Tag : String) : String;
+var
+  i, j : Integer;
+  lQuote : Char;
+begin
+  Result := '';
+  i := 1;
+  //Tag-Name bzw. "<?xml"
+  while (i <= Length(_Tag)) and not IsXmlSpace(_Tag[i]) do
+  begin
+    Result := Result+_Tag[i];
+    Inc(i);
+  end;
+  while i <= Length(_Tag) do
+  begin
+    //Leerraum
+    while (i <= Length(_Tag)) and IsXmlSpace(_Tag[i]) do
+    begin
+      Result := Result+_Tag[i];
+      Inc(i);
+    end;
+    //Attributname
+    while (i <= Length(_Tag)) and not IsXmlSpace(_Tag[i]) and (_Tag[i] <> '=') do
+    begin
+      Result := Result+_Tag[i];
+      Inc(i);
+    end;
+    while (i <= Length(_Tag)) and IsXmlSpace(_Tag[i]) do
+    begin
+      Result := Result+_Tag[i];
+      Inc(i);
+    end;
+    if (i > Length(_Tag)) or (_Tag[i] <> '=') then
+      continue;
+    Result := Result+'=';
+    Inc(i);
+    while (i <= Length(_Tag)) and IsXmlSpace(_Tag[i]) do
+    begin
+      Result := Result+_Tag[i];
+      Inc(i);
+    end;
+    if i > Length(_Tag) then
+      break;
+    if CharInSet(_Tag[i],['"','''']) then
+    begin
+      //Gequoteter Wert: bis zum passenden Anfuehrungszeichen uebernehmen
+      lQuote := _Tag[i];
+      j := PosEx(lQuote,_Tag,i+1);
+      if j = 0 then
+        j := Length(_Tag);
+      Result := Result+Copy(_Tag,i,j-i+1);
+      i := j+1;
+    end else
+    begin
+      j := i;
+      while (j <= Length(_Tag)) and not IsXmlSpace(_Tag[j]) do
+        Inc(j);
+      Result := Result+'"'+Copy(_Tag,i,j-i)+'"';
+      i := j;
+    end;
+  end;
+end;
+
+//Setzt fehlende Anfuehrungszeichen um Attributwerte - nur in der
+//XML-Deklaration und im Start-Tag des Wurzelelements, wo sie ein Shop
+//nachweislich weglaesst (version=1.0, xmlns=http://...)
+function RepairUnquotedAttributes(const _Xml : String; out _Changed : Boolean) : String;
+var
+  lStart, lEnd : Integer;
+  lTag, lFixed : String;
+begin
+  _Changed := false;
+  Result := _Xml;
+  lStart := 1;
+  while (lStart <= Length(Result)) and
+        (IsXmlSpace(Result[lStart]) or (Result[lStart] = #$FEFF)) do
+    Inc(lStart);
+  //XML-Deklaration (meist schon durch XmlDeclToUtf8 neu geschrieben)
+  if Copy(Result,lStart,5) = '<?xml' then
+  begin
+    lEnd := PosEx('?>',Result,lStart);
+    if lEnd = 0 then
+      exit;
+    lTag := Copy(Result,lStart,lEnd-lStart);
+    lFixed := QuoteBareAttributes(lTag);
+    if lFixed <> lTag then
+    begin
+      Result := Copy(Result,1,lStart-1)+lFixed+Copy(Result,lEnd,MaxInt);
+      _Changed := true;
+      lEnd := lStart+Length(lFixed);
+    end;
+    lStart := lEnd+2;
+  end;
+  //Start-Tag des Wurzelelements: Kommentare, Verarbeitungsanweisungen und
+  //DOCTYPE bis zu ihrem tatsaechlichen Ende ueberspringen
+  repeat
+    lStart := PosEx('<',Result,lStart);
+    if lStart = 0 then
+      exit;
+    if (Copy(Result,lStart,2) = '<?') or (Copy(Result,lStart,2) = '<!') then
+    begin
+      lStart := SkipMarkup(Result,lStart);
+      if lStart = 0 then
+        exit;
+      continue;
+    end;
+    break;
+  until false;
+  lEnd := FindTagEnd(Result,lStart);
+  if lEnd = 0 then
+    exit;
+  lTag := Copy(Result,lStart,lEnd-lStart);
+  lFixed := QuoteBareAttributes(lTag);
+  if lFixed <> lTag then
+  begin
+    Result := Copy(Result,1,lStart-1)+lFixed+Copy(Result,lEnd,MaxInt);
+    _Changed := true;
+  end;
+end;
+
 { TIDSConnect_WarenkorbHelper }
 
 function TIDSConnect_WarenkorbHelper.idsAddress(_Node: TLandrixXmlNode;
@@ -1351,6 +1656,7 @@ function TIDSConnect_WarenkorbHelper.idsOrderInfo(_Node: TLandrixXmlNode;
   _Obj: TIDSConnect_OrderInfo): Boolean;
 var
   i : Integer;
+  lMos : String;
 begin
   Result := true;
   for i := 0 to _Node.ChildCount -1 do
@@ -1403,10 +1709,16 @@ begin
     end;
     if SameText(_Node.Children[i].LocalName,'ModeOfShipment') then
     begin
-      if (Pos('LIEFERUNG',UpperCase(NodeText(_Node.Children[i])))>0) then
+      //Frueher galt alles ausser "Lieferung" als Abholung - auch "DELIVERY"
+      //und ein leerer Wert, die in echten Rueckgaben vorkommen
+      lMos := UpperCase(Trim(NodeText(_Node.Children[i])));
+      if (Pos('LIEFERUNG',lMos) > 0) or (lMos = 'DELIVERY') then
         _Obj.ModeOfShipment := idsConnectMos_Lieferung
-      else
-        _Obj.ModeOfShipment := idsConnectMos_Abholung;
+      else if (Pos('ABHOLUNG',lMos) > 0) or (lMos = 'PICKUP') or (lMos = 'COLLECTION') then
+        _Obj.ModeOfShipment := idsConnectMos_Abholung
+      else if lMos <> '' then
+        TIDSConnect.ReportError(Format('Unbekannte Versandart "%s"; Lieferung angenommen.',
+                                [Trim(NodeText(_Node.Children[i]))]),nil);
       continue;
     end;
     if SameText(_Node.Children[i].LocalName,'ZusatzText') then
@@ -1516,7 +1828,12 @@ begin
     end;
     if SameText(_Node.Children[i].LocalName,'PriceBasis') then
     begin
-      itm.PriceBasis := TIDSConnectHelper.StrToFloat(NodeText(_Node.Children[i]),0);
+      //Leer oder 0 kommt in echten Rueckgaben vor (128 Positionen bei einer
+      //Auswertung von 18000 Warenkoerben) und wurde zu 0 - wer durch die
+      //Preisbasis teilt, teilte durch null. Wie ein fehlendes Element: 1.
+      itm.PriceBasis := TIDSConnectHelper.StrToFloat(NodeText(_Node.Children[i]),1);
+      if itm.PriceBasis <= 0 then
+        itm.PriceBasis := 1;
       continue;
     end;
     if SameText(_Node.Children[i].LocalName,'VAT') then
@@ -1807,6 +2124,8 @@ var
   lXml : String;
   lCart : TIDSConnect_Warenkorb;
   lPrevQu : TStringList;
+  lFixed, lRepairNote, lFirstError : String;
+  lEnt, lQuo : Boolean;
 begin
   Result := false;
   //Unbekannte Mengeneinheiten sammeln (siehe ReadQu); verschachtelte Aufrufe
@@ -1832,7 +2151,40 @@ begin
     lXml := DecodeXmlBytes(lBytes);
     if ContainsText(lXml,'<head/>') then
       lXml := ReplaceText(lXml,'<head/>','');
-    lBuffer.LoadFromString(lXml);
+    //Kein gueltiges XML: ein zweiter Versuch mit eng begrenzter Reparatur.
+    //Gefunden in echten Rueckgaben: HTML-Entitaeten (&auml;) und fehlende
+    //Anfuehrungszeichen in Deklaration und Wurzelelement (version=1.0).
+    //Alles andere bleibt ein Fehler; eine Reparatur wird immer gemeldet.
+    lRepairNote := '';
+    lFirstError := '';
+    try
+      lBuffer.LoadFromString(lXml);
+    except
+      on E:Exception do
+        lFirstError := E.Message;
+    end;
+    if lFirstError <> '' then
+    begin
+      lFixed := RepairUnquotedAttributes(RepairHtmlEntities(lXml,lEnt),lQuo);
+      if not (lEnt or lQuo) then
+        raise Exception.Create(lFirstError);
+      FreeAndNil(lBuffer);
+      lBuffer := TLandrixXmlDocument.Create;
+      try
+        lBuffer.LoadFromString(lFixed);
+      except
+        //Die Reparatur hat nicht gereicht: den urspruenglichen Fehler melden
+        raise Exception.Create(lFirstError);
+      end;
+      if lEnt then
+        lRepairNote := 'HTML-Entitäten wie &auml;';
+      if lQuo then
+      begin
+        if lRepairNote <> '' then
+          lRepairNote := lRepairNote+', ';
+        lRepairNote := lRepairNote+'Attribute ohne Anführungszeichen';
+      end;
+    end;
 
     if lBuffer.Root = nil then
       exit;
@@ -1845,6 +2197,9 @@ begin
       begin
         //Erst melden, dann uebernehmen: wirft der Fehler-Callback, bleibt der
         //Warenkorb des Aufrufers unveraendert (Result wird im except false)
+        if lRepairNote <> '' then
+          TIDSConnect.ReportError('Die Rückgabe war kein gültiges XML ('+lRepairNote+
+                                  '); sie wurde repariert eingelesen. Bitte den Shop informieren.',nil);
         ReportUnknownQu;
         Assign(lCart);
       end;

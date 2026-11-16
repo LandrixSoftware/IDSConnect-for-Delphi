@@ -273,6 +273,16 @@ Gemeldet werden außerdem:
   `qm`, `m2` → `MTK`, `m`, `lfm` → `MTR`, `kg` → `KGM`, `l` → `LTR`,
   `Paar` → `PR` (u. a.). Früher wurde `qm` zu `PCE` – aus 12 m² wurden
   12 Stück;
+* eine Rückgabe, die kein gültiges XML ist, aber repariert werden konnte:
+  HTML-Entitäten wie `&auml;` (werden zu Zeichen) und fehlende
+  Anführungszeichen am Wurzelelement (`xmlns=http://…`). Beides kam in
+  echten Rückgaben vor. Eine XML-Deklaration ohne Anführungszeichen
+  (`version=1.0`) wird beim Einlesen ohnehin neu geschrieben und deshalb
+  nicht gemeldet.
+  Jede andere Abweichung bleibt ein Fehler;
+* eine unbekannte Versandart; angenommen wird Lieferung (`DELIVERY` gilt als
+  Lieferung, `PICKUP` als Abholung, ein leerer Wert bleibt bei der
+  Voreinstellung);
 * ein Datum, das nicht als `JJJJ-MM-TT` kommt (z. B. `03/31/2026` oder
   `2026/11/16`; eine Zeitzone oder ein Zeitanteil danach sind erlaubt); es wird
   nicht übernommen, weil `04/01/2026` mehrdeutig wäre;

@@ -773,6 +773,93 @@ begin
       Check(FormatDateTime('yyyy-mm-dd',Cart.WarenkorbInfo.Date) = Copy(QuXml,1,10),'date wrong: '+QuXml);
     end;
 
+    //Repair of invalid XML from real shops; PriceBasis and ModeOfShipment
+    AllErrors := '';
+    QuStream := TStringStream.Create('<?xml version=''1.0'' encoding=''UTF-8''?>'+
+      '<Warenkorb xmlns="http://www.itek.de/Shop-Anbindung/Warenkorb/">'+
+      '<WarenkorbInfo><Version>2.0</Version></WarenkorbInfo><Order>'+
+      '<OrderInfo><ModeOfShipment>DELIVERY</ModeOfShipment></OrderInfo>'+
+      '<OrderItem><ArtNo>1</ArtNo><Kurztext>Gr&ouml;&szlig;e &lt;5&gt; &Uuml;</Kurztext>'+
+      '<Langtext><![CDATA[bleibt &auml;]]></Langtext><PriceBasis></PriceBasis></OrderItem>'+
+      '<OrderItem><ArtNo>2</ArtNo><PriceBasis>0</PriceBasis></OrderItem>'+
+      '</Order></Warenkorb>',TEncoding.UTF8);
+    try
+      Check(Cart.LoadFromStream(QuStream),'cart with HTML entities not repaired');
+    finally
+      QuStream.Free;
+    end;
+    Check(Cart.Order.OrderItems[0].Kurztext = 'Gr'+#$00F6+#$00DF+'e <5> '+#$00DC,'entities wrong: '+Cart.Order.OrderItems[0].Kurztext);
+    Check(Cart.Order.OrderItems[0].Langtext = 'bleibt &auml;','CDATA changed');
+    Check(Pos('HTML-Entit',AllErrors) > 0,'repair not reported: '+AllErrors);
+    Check(Cart.Order.OrderItems[0].PriceBasis = 1,'empty PriceBasis not 1');
+    Check(Cart.Order.OrderItems[1].PriceBasis = 1,'PriceBasis 0 not 1');
+    Check(Cart.Order.OrderInfo.ModeOfShipment = idsConnectMos_Lieferung,'DELIVERY not Lieferung');
+
+    AllErrors := '';
+    QuStream := TStringStream.Create('<?xml version=1.0 encoding=UTF-8?><Warenkorb '+
+      'xmlns:xsi=http://www.w3.org/2001/XmlSchema-instance xmlns=http://www.itek.de/Shop-Anbindung/Warenkorb/>'+
+      '<WarenkorbInfo><Version>2.0</Version></WarenkorbInfo><Order><OrderInfo>'+
+      '<ModeOfShipment>Abholung</ModeOfShipment></OrderInfo>'+
+      '<OrderItem><ArtNo>Q</ArtNo><Kurztext>"Zoll"</Kurztext></OrderItem></Order></Warenkorb>',TEncoding.UTF8);
+    try
+      Check(Cart.LoadFromStream(QuStream),'cart with unquoted attributes not repaired');
+    finally
+      QuStream.Free;
+    end;
+    Check(Cart.Order.OrderItems[0].ArtNo = 'Q','unquoted: wrong content');
+    Check(Cart.Order.OrderItems[0].Kurztext = '"Zoll"','unquoted: text changed');
+    Check(Cart.Order.OrderInfo.ModeOfShipment = idsConnectMos_Abholung,'Abholung lost');
+    Check(Pos('ohne Anf',AllErrors) > 0,'quote repair not reported: '+AllErrors);
+
+    //Repair respects quoted values (with = ? >), URLs with a query and a
+    //comment containing a fake tag before the root
+    AllErrors := '';
+    QuStream := TStringStream.Create('<!-- > <fake a=b> --><Warenkorb note="a>b" href="https://s/?x=1" '+
+      'bare=https://s/?y=2 xmlns=http://www.itek.de/Shop-Anbindung/Warenkorb/>'+
+      '<WarenkorbInfo><Version>2.0</Version></WarenkorbInfo><Order>'+
+      '<OrderItem><ArtNo>R</ArtNo></OrderItem></Order></Warenkorb>',TEncoding.UTF8);
+    try
+      Check(Cart.LoadFromStream(QuStream),'root with quoted and bare attributes not repaired: '+AllErrors);
+    finally
+      QuStream.Free;
+    end;
+    Check(Cart.Order.OrderItems[0].ArtNo = 'R','root repair: wrong content');
+
+    //Apostrophe in a bare value and a comment with a quote in a DOCTYPE subset
+    AllErrors := '';
+    QuStream := TStringStream.Create('<!DOCTYPE Warenkorb [<!-- '' -->]><Warenkorb href=https://s/O''Reilly '+
+      'xmlns=http://www.itek.de/Shop-Anbindung/Warenkorb/><WarenkorbInfo><Version>2.0</Version>'+
+      '</WarenkorbInfo><Order><OrderItem><ArtNo>R</ArtNo></OrderItem></Order></Warenkorb>',TEncoding.UTF8);
+    try
+      Check(Cart.LoadFromStream(QuStream),'apostrophe/DOCTYPE case not repaired: '+AllErrors);
+    finally
+      QuStream.Free;
+    end;
+
+    //Not repairable: stays an error, the cart is kept
+    AllErrors := '';
+    QuStream := TStringStream.Create('<Warenkorb><Order><OrderItem><ArtNo>&unknown;</ArtNo></OrderItem></Order></Warenkorb>',TEncoding.UTF8);
+    try
+      Check(not Cart.LoadFromStream(QuStream),'broken cart accepted');
+    finally
+      QuStream.Free;
+    end;
+    Check(Cart.Order.OrderItems[0].ArtNo = 'R','cart replaced although reading failed');
+    Check((Pos('nicht gelesen',AllErrors) > 0) and (Pos('repariert',AllErrors) = 0),'wrong report: '+AllErrors);
+
+    //Empty and unknown ModeOfShipment
+    AllErrors := '';
+    QuStream := TStringStream.Create('<Warenkorb xmlns="http://www.itek.de/Shop-Anbindung/Warenkorb/"><WarenkorbInfo>'+
+      '<Version>2.0</Version></WarenkorbInfo><Order><OrderInfo><ModeOfShipment>Spedition</ModeOfShipment>'+
+      '</OrderInfo></Order></Warenkorb>',TEncoding.UTF8);
+    try
+      Check(Cart.LoadFromStream(QuStream),'cart with odd shipment not read');
+    finally
+      QuStream.Free;
+    end;
+    Check(Cart.Order.OrderInfo.ModeOfShipment = idsConnectMos_Lieferung,'unknown shipment not default');
+    Check(Pos('Spedition',AllErrors) > 0,'unknown shipment not reported');
+
     Writeln('PASS: kept cart on failed fetch, unknown codes, missing input reported, empty credentials allowed');
     Writeln('PASS: response diagnostics, masked WKE request, selected and default versions for WKE/SV/LI, multiple-return queue/header/duplicates');
   finally
