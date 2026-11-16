@@ -777,10 +777,11 @@ begin
 
   lLabel := TIDSConnect_Heatinglabel.Create;
   try
-    //Beispielanlage: Gas-Brennwertkessel, Regler und zwei Solarkollektoren.
-    //Die GTINs sind Platzhalter - eine echte Plattform meldet sie als
-    //NotFound. Mit echten Artikeln: Schalter "Heatinglabel aus Warenkorb"
-    //(lLabel.AddFromWarenkorb mit dem zuletzt empfangenen Warenkorb).
+    //Beispielanlage (Wolf): Gas-Brennwert-Zentrale mit Speicher, Bedienmodul,
+    //Solarmodul und zwei Sonnenkollektoren - echte GTINs, damit eine
+    //Plattform die Komponenten erkennen kann (Used statt NotFound). Fuer die
+    //Artikel eines empfangenen Warenkorbs: Schalter "Heatinglabel aus
+    //Warenkorb" (lLabel.AddFromWarenkorb).
     lLabel.Header.PackageFunction := idsHlPf_Combination;
     lLabel.Header.PackageType := idsHlPt_CombinationBoiler;
     lLabel.Header.LoadProfile := idsHlLp_XL;
@@ -789,24 +790,31 @@ begin
     lLabel.Header.IncludeProductLabels := true;
     with lLabel.Positions.AddItem do
     begin
-      GTIN := '4000000000017';
-      Shorttext := 'Gas-Brennwertkessel 20 kW';
+      GTIN := '4045013283442';
+      Shorttext := 'Wolf Gasbrennwert-Zentrale CGW-2-24/140L';
       Qty := 1;
       RefItems_Customer := '1';
     end;
     with lLabel.Positions.AddItem do
     begin
-      GTIN := '4000000000024';
-      Shorttext := 'Witterungsgeführter Regler';
+      GTIN := '4045013189485';
+      Shorttext := 'Wolf Bedienmodul BM-2 inkl. Außenfühler';
       Qty := 1;
       RefItems_Customer := '2';
     end;
     with lLabel.Positions.AddItem do
     begin
-      GTIN := '4000000000031';
-      Shorttext := 'Flachkollektor 2,3 m²';
-      Qty := 2;
+      GTIN := '4045013285590';
+      Shorttext := 'Wolf Solarmodul SM1-2';
+      Qty := 1;
       RefItems_Customer := '3';
+    end;
+    with lLabel.Positions.AddItem do
+    begin
+      GTIN := '4045013044869';
+      Shorttext := 'Wolf Sonnenkollektor TopSon F3-1';
+      Qty := 2;
+      RefItems_Customer := '4';
     end;
     SendHeatinglabel(lLabel);
   finally
