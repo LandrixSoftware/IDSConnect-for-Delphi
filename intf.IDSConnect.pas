@@ -376,17 +376,204 @@ begin
     Result := 0;
 end;
 
+//Gaengige Schreibweisen ausserhalb der IDS-Codeliste. Eine Auswertung von
+//6500 echten Rueckgaben (16.11.2026) fand u. a. STK, Stk. und qm - qm wurde
+//frueher zu PCE, aus 12 m2 wurden so 12 Stueck.
+function TryQuAliasToQu(const _Text : String; out _Qu : TIDSConnect_QU) : Boolean;
+var
+  lVal : String;
+begin
+  Result := true;
+  //AnsiUpperCase statt UpperCase: UpperCase wandelt nur a..z, aus "Stück"
+  //wurde "STüCK" und passte nicht
+  lVal := AnsiUpperCase(Trim(_Text));
+  //"Stk." wie "Stk"
+  while (lVal <> '') and (lVal[Length(lVal)] = '.') do
+    Delete(lVal,Length(lVal),1);
+  if (lVal = 'STK') or (lVal = 'ST') or (lVal = 'STCK') or (lVal = 'STÜCK') or
+     (lVal = 'STUECK') or (lVal = 'C62') or (lVal = 'H87') then
+    _Qu := idsConnectQu_PCE
+  else if (lVal = 'QM') or (lVal = 'M2') or (lVal = 'M²') then
+    _Qu := idsConnectQu_MTK
+  else if (lVal = 'CBM') or (lVal = 'M3') or (lVal = 'M³') then
+    _Qu := idsConnectQu_MTQ
+  else if (lVal = 'M') or (lVal = 'LFM') or (lVal = 'LFDM') then
+    _Qu := idsConnectQu_MTR
+  else if lVal = 'MM' then
+    _Qu := idsConnectQu_MMT
+  else if lVal = 'CM' then
+    _Qu := idsConnectQu_CMT
+  else if lVal = 'KG' then
+    _Qu := idsConnectQu_KGM
+  else if lVal = 'G' then
+    _Qu := idsConnectQu_GRM
+  else if lVal = 'T' then
+    _Qu := idsConnectQu_TNE
+  else if lVal = 'L' then
+    _Qu := idsConnectQu_LTR
+  else if (lVal = 'PAAR') or (lVal = 'PA') then
+    _Qu := idsConnectQu_PR
+  else if lVal = 'SATZ' then
+    _Qu := idsConnectQu_SET
+  else
+    Result := false;
+end;
+
+threadvar
+  //Waehrend LoadFromStream: unbekannte Mengeneinheiten mit Anzahl, damit am
+  //Ende eine Meldung je Warenkorb kommt statt einer je Position (bei grossen
+  //Warenkoerben waren das Hunderte). Ausserhalb von LoadFromStream nil.
+  GUnknownQu : TStringList;
+
 //Liest eine Mengeneinheit. Ein unbekannter Code wurde frueher still zu PCE -
 //aus 100 Rollen ("ROL") wurden so 100 Stueck. Der Ersatzwert bleibt, damit
-//das Datenmodell gefuellt ist, aber der Aufrufer erfaehrt davon.
-function ReadQu(const _Text, _Where : String) : TIDSConnect_QU;
+//das Datenmodell gefuellt ist, aber der Aufrufer erfaehrt davon; die
+//Originalangabe bleibt in OrderItem.QUOriginal erhalten.
+function ReadQu(const _Text, _Where : String; _InRohstoff : Boolean = false) : TIDSConnect_QU;
 var
-  lText : String;
+  lText, lKey : String;
+  i : Integer;
 begin
   lText := Trim(_Text);
-  if (not TIDSConnectHelper.TryQuStrToQu(lText,Result)) and (lText <> '') then
-    TIDSConnect.ReportError(Format('Unbekannte Mengeneinheit "%s" (%s); als PCE (Stück) übernommen.',
-                            [lText,_Where]),nil);
+  if TIDSConnectHelper.TryQuStrToQu(lText,Result) then
+    exit;
+  if TryQuAliasToQu(lText,Result) then
+    exit;
+  Result := idsConnectQu_PCE;
+  if lText = '' then
+    lKey := '(leer)'
+  else
+    lKey := '"'+lText+'"';
+  //In der Sammelmeldung muss erkennbar bleiben, wo die Einheit stand: die
+  //Originalangabe in QUOriginal gibt es nur fuer die Positionseinheit
+  if _InRohstoff then
+    lKey := lKey+' in Rohstoffanteilen';
+  if GUnknownQu = nil then
+  begin
+    TIDSConnect.ReportError(Format('Unbekannte Mengeneinheit %s (%s); als PCE (Stück) übernommen.',
+                            [lKey,_Where]),nil);
+    exit;
+  end;
+  i := GUnknownQu.IndexOf(lKey);
+  if i < 0 then
+    GUnknownQu.AddObject(lKey,TObject(1))
+  else
+    GUnknownQu.Objects[i] := TObject(NativeInt(GUnknownQu.Objects[i])+1);
+end;
+
+//Meldet die in GUnknownQu gesammelten Mengeneinheiten in einer Zeile
+procedure ReportUnknownQu;
+var
+  i : Integer;
+  lList : String;
+begin
+  if (GUnknownQu = nil) or (GUnknownQu.Count = 0) then
+    exit;
+  lList := '';
+  for i := 0 to GUnknownQu.Count-1 do
+  begin
+    if lList <> '' then
+      lList := lList+', ';
+    lList := lList+Format('%s (%d×)',[GUnknownQu[i],NativeInt(GUnknownQu.Objects[i])]);
+  end;
+  TIDSConnect.ReportError('Unbekannte Mengeneinheiten im Warenkorb: '+lList+
+                          '; als PCE (Stück) übernommen. Die gelieferte Einheit einer Position '+
+                          'steht in OrderItem.QUOriginal.',nil);
+end;
+
+//Liest ein Datum (xs:date). Ein anderes Format (z. B. "03/31/2026") wurde
+//frueher still verworfen; jetzt wird es gemeldet. Geraten wird nicht -
+//"04/01/2026" kann der 1. April oder der 4. Januar sein.
+//Pruefen, ob s nur aus Ziffern an den Stellen von _Mask ('9') und den
+//uebrigen Zeichen der Maske besteht
+function MatchesMask9(const _S, _Mask : String) : Boolean;
+var
+  i : Integer;
+begin
+  Result := Length(_S) = Length(_Mask);
+  if not Result then
+    exit;
+  for i := 1 to Length(_Mask) do
+    if _Mask[i] = '9' then
+      Result := Result and CharInSet(_S[i],['0'..'9'])
+    else
+      Result := Result and (_S[i] = _Mask[i]);
+end;
+
+//Zeitzone nach xs:date/xs:dateTime: '', 'Z', '+hh:mm' oder '-hh:mm'
+function IsXsTimeZone(const _S : String) : Boolean;
+begin
+  Result := (_S = '') or (_S = 'Z');
+  if Result or (Length(_S) <> 6) or not CharInSet(_S[1],['+','-']) or
+     not MatchesMask9(Copy(_S,2,5),'99:99') then
+    exit;
+  //xs:dateTime erlaubt -14:00 bis +14:00
+  Result := (StrToInt(Copy(_S,2,2))*60+StrToInt(Copy(_S,5,2)) <= 14*60) and
+            (StrToInt(Copy(_S,5,2)) <= 59);
+end;
+
+//Was nach JJJJ-MM-TT folgen darf: eine Zeitzone oder Thh:mm:ss[.f][Zeitzone]
+function IsXsDateSuffix(const _S : String) : Boolean;
+var
+  lRest : String;
+  i, lH, lM, lSec : Integer;
+begin
+  if IsXsTimeZone(_S) then
+    exit(true);
+  Result := false;
+  if (Length(_S) < 9) or (_S[1] <> 'T') or not MatchesMask9(Copy(_S,2,8),'99:99:99') then
+    exit;
+  lH := StrToInt(Copy(_S,2,2));
+  lM := StrToInt(Copy(_S,5,2));
+  lSec := StrToInt(Copy(_S,8,2));
+  //24:00:00 ist laut XSD erlaubt (Ende des Tages), sonst die ueblichen Grenzen
+  if not (((lH <= 23) and (lM <= 59) and (lSec <= 59)) or
+          ((lH = 24) and (lM = 0) and (lSec = 0))) then
+    exit;
+  lRest := Copy(_S,10,MaxInt);
+  if (lRest <> '') and (lRest[1] = '.') then
+  begin
+    i := 2;
+    while (i <= Length(lRest)) and CharInSet(lRest[i],['0'..'9']) do
+    begin
+      //24:00:00 nur mit einem Bruchteil aus Nullen
+      if (lH = 24) and (lRest[i] <> '0') then
+        exit;
+      Inc(i);
+    end;
+    if i = 2 then
+      exit;
+    lRest := Copy(lRest,i,MaxInt);
+  end;
+  Result := IsXsTimeZone(lRest);
+end;
+
+function ReadDate(const _Text, _What : String) : TDate;
+var
+  lText : String;
+  lOk : Boolean;
+  lDate : TDateTime;
+begin
+  Result := 0;
+  lText := Trim(_Text);
+  if lText = '' then
+    exit;
+  //Streng JJJJ-MM-TT; danach nur eine Zeitzone (Z, +01:00) oder ein
+  //Zeitanteil (xs:dateTime). DateStrToDate las nur Ziffern an festen Stellen
+  //und nahm so auch 2026/11/16 oder 2026-11-16xyz an.
+  lOk := MatchesMask9(Copy(lText,1,10),'9999-99-99') and
+         IsXsDateSuffix(Copy(lText,11,MaxInt));
+  if lOk then
+    lOk := TryEncodeDate(StrToInt(Copy(lText,1,4)),StrToInt(Copy(lText,6,2)),
+                         StrToInt(Copy(lText,9,2)),lDate);
+  if lOk then
+  begin
+    //1899-12-30 ist ein gueltiges Datum, auch wenn es als TDate 0 ist
+    Result := lDate;
+    exit;
+  end;
+  TIDSConnect.ReportError(Format('%s "%s" hat nicht das Format JJJJ-MM-TT und wurde nicht übernommen.',
+                          [_What,lText]),nil);
 end;
 
 //Stellt die XML-Deklaration eines bereits dekodierten Strings auf UTF-8 um
@@ -1141,7 +1328,7 @@ begin
     end;
     if SameText(_Node.Children[i].LocalName,'ReferenzDate') then
     begin
-      _Obj.ReferenzDate := TIDSConnectHelper.DateStrToDate(NodeText(_Node.Children[i]));
+      _Obj.ReferenzDate := ReadDate(NodeText(_Node.Children[i]),'Das Belegdatum einer Referenz');
       continue;
     end;
     if SameText(_Node.Children[i].LocalName,'ReferenzType') then
@@ -1211,7 +1398,7 @@ begin
     end;
     if SameText(_Node.Children[i].LocalName,'DeliveryDate') then
     begin
-      _Obj.DeliveryDate := TIDSConnectHelper.DateStrToDate(NodeText(_Node.Children[i]));
+      _Obj.DeliveryDate := ReadDate(NodeText(_Node.Children[i]),'Das Lieferdatum');
       continue;
     end;
     if SameText(_Node.Children[i].LocalName,'ModeOfShipment') then
@@ -1303,7 +1490,8 @@ begin
     end;
     if SameText(_Node.Children[i].LocalName,'QU') then
     begin
-      itm.QU := ReadQu(NodeText(_Node.Children[i]),Format('Position %d',[_Obj.Count]));
+      itm.QUOriginal := Trim(NodeText(_Node.Children[i]));
+      itm.QU := ReadQu(itm.QUOriginal,Format('Position %d',[_Obj.Count]));
       continue;
     end;
     if SameText(_Node.Children[i].LocalName,'Kurztext') then
@@ -1466,7 +1654,7 @@ begin
     end;
     if SameText(_Node.Children[i].LocalName,'Gewichtsanteilseinheit') then
     begin
-      itm.Gewichtsanteilseinheit := ReadQu(NodeText(_Node.Children[i]),'Gewichtsanteilseinheit eines Rohstoffanteils');
+      itm.Gewichtsanteilseinheit := ReadQu(NodeText(_Node.Children[i]),'Gewichtsanteilseinheit eines Rohstoffanteils',true);
       continue;
     end;
     if SameText(_Node.Children[i].LocalName,'Basiswert') then
@@ -1476,7 +1664,7 @@ begin
     end;
     if SameText(_Node.Children[i].LocalName,'Basiseinheit') then
     begin
-      itm.Basiseinheit := ReadQu(NodeText(_Node.Children[i]),'Basiseinheit eines Rohstoffanteils');
+      itm.Basiseinheit := ReadQu(NodeText(_Node.Children[i]),'Basiseinheit eines Rohstoffanteils',true);
       continue;
     end;
     if SameText(_Node.Children[i].LocalName,'Basisnotierung') then
@@ -1570,7 +1758,7 @@ begin
     if UnusedObj(_Node.Children[i]) then continue;
     if SameText(_Node.Children[i].LocalName,'Date') then
     begin
-      _Obj.Date := TIDSConnectHelper.DateStrToDate(NodeText(_Node.Children[i]));
+      _Obj.Date := ReadDate(NodeText(_Node.Children[i]),'Das Datum des Warenkorbs');
       continue;
     end;
     if SameText(_Node.Children[i].LocalName,'Time') then
@@ -1618,16 +1806,23 @@ var
   lBytes : TBytes;
   lXml : String;
   lCart : TIDSConnect_Warenkorb;
+  lPrevQu : TStringList;
 begin
   Result := false;
+  //Unbekannte Mengeneinheiten sammeln (siehe ReadQu); verschachtelte Aufrufe
+  //im selben Thread behalten ihre eigene Liste. Angelegt wird sie erst im
+  //try-Block, damit sie bei jeder Ausnahme wieder abgebaut wird.
+  lPrevQu := GUnknownQu;
   //Frueher wurde hier zuerst Clear aufgerufen: scheiterte das Einlesen, war
   //der Warenkorb des Aufrufers leer - bei WKS also der gesendete Warenkorb.
   //Jetzt wird in einen eigenen Warenkorb gelesen und nur bei Erfolg
   //uebernommen.
   lCart := nil;
-  lBuffer := TLandrixXmlDocument.Create;
+  lBuffer := nil;
   try
   try
+    GUnknownQu := TStringList.Create;
+    lBuffer := TLandrixXmlDocument.Create;
     _Stream.Position := 0;
     SetLength(lBytes,_Stream.Size);
     if Length(lBytes) > 0 then
@@ -1647,7 +1842,12 @@ begin
       lCart := TIDSConnect_Warenkorb.Create;
       Result := lCart.idsWarenkorb(lBuffer.Root);
       if Result then
+      begin
+        //Erst melden, dann uebernehmen: wirft der Fehler-Callback, bleibt der
+        //Warenkorb des Aufrufers unveraendert (Result wird im except false)
+        ReportUnknownQu;
         Assign(lCart);
+      end;
     end;
   except
     on E:Exception do
@@ -1658,6 +1858,9 @@ begin
     end;
   end;
   finally
+    if GUnknownQu <> lPrevQu then
+      GUnknownQu.Free;
+    GUnknownQu := lPrevQu;
     lCart.Free;
     lBuffer.Free;
   end;

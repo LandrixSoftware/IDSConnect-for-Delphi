@@ -264,8 +264,18 @@ Gemeldet werden außerdem:
   Abbruchgrund: Welche ein Shop braucht, liefert `IDSConnectLI`, und der Shop
   lehnt fehlende Daten selbst ab;
 * unbekannte Mengeneinheiten und Rohstoffe in einer Rückgabe, mit dem
-  Originalwert. Übernommen werden sie als `PCE` bzw. `CU` – wer den Fall
-  fachlich behandeln will, wertet die Meldung aus;
+  Originalwert. Übernommen werden sie als `PCE` bzw. `CU`. Mengeneinheiten
+  kommen als **eine** Meldung je Warenkorb mit Anzahl, z. B.
+  `"PK" (3×), (leer) (1×)`, Einheiten aus Rohstoffanteilen mit dem Zusatz
+  „in Rohstoffanteilen“; die gelieferte Angabe steht je Position in
+  `OrderItem.QUOriginal`. Gängige Schreibweisen außerhalb der Codeliste
+  werden ohne Meldung umgesetzt: `STK`, `ST`, `Stk.`, `Stück` → `PCE`,
+  `qm`, `m2` → `MTK`, `m`, `lfm` → `MTR`, `kg` → `KGM`, `l` → `LTR`,
+  `Paar` → `PR` (u. a.). Früher wurde `qm` zu `PCE` – aus 12 m² wurden
+  12 Stück;
+* ein Datum, das nicht als `JJJJ-MM-TT` kommt (z. B. `03/31/2026` oder
+  `2026/11/16`; eine Zeitzone oder ein Zeitanteil danach sind erlaubt); es wird
+  nicht übernommen, weil `04/01/2026` mehrdeutig wäre;
 * Referenzen ohne Belegdatum (Muss-Feld); sie werden nicht gesendet;
 * eine Shop- oder Hook-Adresse mit `http://` statt `https://` (außer
   `localhost`). Mit `TIDSConnect.IDSCONNECT_REQUIRE_HTTPS_HOOK := True` bricht

@@ -354,7 +354,8 @@ var
   LastError: String;
   RolReports: Integer;
   OffMainThread, Done: Boolean;
-  AllErrors, TmpA, TmpB, OldDir: String;
+  AllErrors, TmpA, TmpB, OldDir, QuXml: String;
+  QuStream: TStringStream;
   Waited: Integer;
   Lock: TFileStream;
   Worker: TThread;
@@ -697,6 +698,81 @@ begin
     Check(TIDSConnect.IDSCONNECT_WEBVIEW_USERDATAFOLDER = '','default user data folder not empty');
 
     Writeln('PASS: tmp form file deleted, WebView2 profile per user');
+    //Units from real returns: common spellings are mapped silently, the
+    //original stays in QUOriginal, unknown ones give one message per cart;
+    //a delivery date in another format is reported instead of dropped silently
+    AllErrors := '';
+    QuXml := '<?xml version="1.0" encoding="UTF-8"?>'+
+      '<Warenkorb xmlns="http://www.itek.de/Shop-Anbindung/Warenkorb/">'+
+      '<WarenkorbInfo><Date>2026-11-16</Date><Time>12:00:00</Time>'+
+      '<RueckgabeKZ>Warenkorbr'+#$00FC+'ckgabe</RueckgabeKZ><Version>2.5</Version></WarenkorbInfo>'+
+      '<Order><OrderInfo><DeliveryDate>03/31/2026</DeliveryDate><ModeOfShipment>Lieferung</ModeOfShipment><Cur>EUR</Cur></OrderInfo>'+
+      '<OrderItem><ArtNo>1</ArtNo><Qty>2</Qty><QU>STK</QU><Kurztext>a</Kurztext></OrderItem>'+
+      '<OrderItem><ArtNo>2</ArtNo><Qty>2</Qty><QU>Stk.</QU><Kurztext>b</Kurztext></OrderItem>'+
+      '<OrderItem><ArtNo>3</ArtNo><Qty>12</Qty><QU>qm</QU><Kurztext>c</Kurztext></OrderItem>'+
+      '<OrderItem><ArtNo>4</ArtNo><Qty>1</Qty><QU>PK</QU><Kurztext>d</Kurztext></OrderItem>'+
+      '<OrderItem><ArtNo>5</ArtNo><Qty>1</Qty><QU>PK</QU><Kurztext>e</Kurztext></OrderItem>'+
+      '<OrderItem><ArtNo>6</ArtNo><Qty>1</Qty><QU></QU><Kurztext>f</Kurztext></OrderItem>'+
+      '<OrderItem><ArtNo>7</ArtNo><Qty>1</Qty><QU>MTR</QU><Kurztext>g</Kurztext></OrderItem>'+
+      '<OrderItem><ArtNo>8</ArtNo><Qty>1</Qty><QU>St'+#$00FC+'ck</QU><Kurztext>h</Kurztext>'+
+      '<Rohstoffanteil><Rohstoff>CU</Rohstoff><Gewichtsanteilswert>1</Gewichtsanteilswert>'+
+      '<Gewichtsanteilseinheit>Pfund</Gewichtsanteilseinheit></Rohstoffanteil></OrderItem>'+
+      '</Order></Warenkorb>';
+    QuStream := TStringStream.Create(QuXml,TEncoding.UTF8);
+    try
+      Check(Cart.LoadFromStream(QuStream),'cart with odd units not read');
+    finally
+      QuStream.Free;
+    end;
+    Check(Cart.Order.OrderItems[0].QU = idsConnectQu_PCE,'STK not PCE');
+    Check(Cart.Order.OrderItems[1].QU = idsConnectQu_PCE,'Stk. not PCE');
+    Check(Cart.Order.OrderItems[2].QU = idsConnectQu_MTK,'qm not MTK');
+    Check(Cart.Order.OrderItems[3].QU = idsConnectQu_PCE,'PK not PCE');
+    Check(Cart.Order.OrderItems[3].QUOriginal = 'PK','QUOriginal lost');
+    Check(Cart.Order.OrderItems[1].QUOriginal = 'Stk.','QUOriginal of alias lost');
+    Check(Cart.Order.OrderItems[6].QUOriginal = 'MTR','QUOriginal of standard code lost');
+    Check(Pos('STK',AllErrors) + Pos('Stk.',AllErrors) + Pos('qm',AllErrors) = 0,
+          'Alias reported as unknown: '+AllErrors);
+    Check(Pos('"PK" (2'+#$00D7+')',AllErrors) > 0,'unknown unit not aggregated: '+AllErrors);
+    Check(Pos('(leer) (1'+#$00D7+')',AllErrors) > 0,'empty unit not reported: '+AllErrors);
+    Check(Length(AllErrors)-Length(StringReplace(AllErrors,'Mengeneinheit','',[rfReplaceAll])) =
+          Length('Mengeneinheit'),'more than one unit message per cart: '+AllErrors);
+    Check(Cart.Order.OrderItems[7].QU = idsConnectQu_PCE,'Stueck not PCE');
+    Check(Pos('"St'+#$00FC+'ck"',AllErrors) = 0,'Stueck reported as unknown: '+AllErrors);
+    Check(Pos('"Pfund" in Rohstoffanteilen (1'+#$00D7+')',AllErrors) > 0,
+          'raw material unit not marked: '+AllErrors);
+    Check(Cart.Order.OrderInfo.DeliveryDate = 0,'US date guessed');
+    Check(Pos('03/31/2026',AllErrors) > 0,'odd delivery date not reported: '+AllErrors);
+    //Strict date check: slashes and trailing garbage are reported, a time
+    //zone or time part is fine, 1899-12-30 is a valid date
+    for QuXml in TArray<String>.Create('2026/11/16','2026-11-16xyz','2026-02-30',
+      '2026-11-16-garbage','2026-11-16+','2026-11-16Tinvalid','2026-11-16T10:00:00.','2026-11-16+99:99','2026-11-16T99:99:99','2026-11-16T24:00:01','2026-11-16T24:00:00.1') do
+    begin
+      AllErrors := '';
+      QuStream := TStringStream.Create('<Warenkorb xmlns="http://www.itek.de/Shop-Anbindung/Warenkorb/">'+
+        '<WarenkorbInfo><Date>'+QuXml+'</Date><Version>2.5</Version></WarenkorbInfo><Order/></Warenkorb>',TEncoding.UTF8);
+      try
+        Check(Cart.LoadFromStream(QuStream),'date cart not read');
+      finally
+        QuStream.Free;
+      end;
+      Check(Pos(QuXml,AllErrors) > 0,'bad date not reported: '+QuXml);
+    end;
+    for QuXml in TArray<String>.Create('2026-11-16','2026-11-16Z','2026-11-16+01:00','2026-11-16-05:00',
+      '2026-11-16T10:00:00','2026-11-16T10:00:00.123Z','2026-11-16T10:00:00+01:00','2026-11-16T24:00:00','2026-11-16T24:00:00.000','2026-11-16+14:00','1899-12-30') do
+    begin
+      AllErrors := '';
+      QuStream := TStringStream.Create('<Warenkorb xmlns="http://www.itek.de/Shop-Anbindung/Warenkorb/">'+
+        '<WarenkorbInfo><Date>'+QuXml+'</Date><Version>2.5</Version></WarenkorbInfo><Order/></Warenkorb>',TEncoding.UTF8);
+      try
+        Check(Cart.LoadFromStream(QuStream),'date cart not read');
+      finally
+        QuStream.Free;
+      end;
+      Check(Pos('JJJJ',AllErrors) = 0,'good date reported: '+QuXml+' '+AllErrors);
+      Check(FormatDateTime('yyyy-mm-dd',Cart.WarenkorbInfo.Date) = Copy(QuXml,1,10),'date wrong: '+QuXml);
+    end;
+
     Writeln('PASS: kept cart on failed fetch, unknown codes, missing input reported, empty credentials allowed');
     Writeln('PASS: response diagnostics, masked WKE request, selected and default versions for WKE/SV/LI, multiple-return queue/header/duplicates');
   finally

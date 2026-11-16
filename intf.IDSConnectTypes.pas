@@ -267,6 +267,10 @@ type
     ArtNo : String; //Kann String 15 Artikelnummer des Lieferanten oder Herstellers
     Qty : double; //Decimal 13,2ArtMenge, Anfrage-, Angebots- oder Bestellmenge (je nach Datenaustauschphase)
     QU : TIDSConnect_QU; //String 4 Anfrage- / Angebots-Mengeneinheit
+    //Mengeneinheit, wie der Shop sie geliefert hat (z. B. "PK" oder "Stk.").
+    //QU ist daraus abgeleitet; Einheiten ausserhalb der IDS-Codeliste werden
+    //dort zu PCE. Nur beim Einlesen gesetzt, beim Senden zaehlt QU.
+    QUOriginal : String;
     Kurztext : String; //String 100
     Langtext : String; //Kann String
     OfferPrice : double; //Kann Decimal 10,4 Brutto-, Listenpreis
@@ -681,6 +685,7 @@ begin
   ArtNo := '';
   Qty := 0;
   QU := idsConnectQu_PCE;
+  QUOriginal := '';
   Kurztext := '';
   Langtext := '';
   OfferPrice := 0;
@@ -716,6 +721,7 @@ begin
   ArtNo := _From.ArtNo;
   Qty := _From.Qty;
   QU := _From.QU;
+  QUOriginal := _From.QUOriginal;
   Kurztext := _From.Kurztext;
   Langtext := _From.Langtext;
   OfferPrice := _From.OfferPrice;
