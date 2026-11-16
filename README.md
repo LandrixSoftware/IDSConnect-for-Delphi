@@ -454,6 +454,12 @@ Sie prüfen Rückgaben, Fehlerfälle, unveränderte Bytes und die Passwortmaskie
 ohne einen echten Shop aufzurufen, dazu das Sammeln mehrerer Rückgaben samt
 Kopfdaten und den Schutz vor doppelt gelieferten Rückgaben sowie die
 Kodierungserkennung, Namensraum-Präfixe und gemischten Inhalt.
+Liegen die XSD-Dateien von itek lokal unter `Documentation/IDSConnect 2.5/`
+und `Documentation/IDSConnect 2.5.1/` (sie sind nicht im Repository), prüfen
+die Tests außerdem selbst erzeugte Warenkörbe beider Versionen mit dem
+XSD-Validator aus LandrixXML gegen `warenkorb_senden_2_5.xsd` bzw.
+`warenkorb_senden_2_5_1.xsd`; fehlt eine der beiden Dateien, wird nur die
+Prüfung dieser Version übersprungen.
 `python Tests/test_hook_php.py` (PHP im PATH) prüft die Warteschlange von
 `idsconnect.php` auf dem eingebauten PHP-Server.
 

@@ -148,6 +148,8 @@ with tempfile.TemporaryDirectory(prefix='idsconnect-tests-', ignore_cleanup_erro
         subprocess.run([
             str(Path(output) / 'IDSConnectDiagnosticsTests.exe'),
             f'http://127.0.0.1:{server.server_port}',
+            # itek XSDs, only present locally (not in the repository)
+            str(ROOT / 'Documentation'),
         ], check=True, timeout=60)
     finally:
         server.shutdown()

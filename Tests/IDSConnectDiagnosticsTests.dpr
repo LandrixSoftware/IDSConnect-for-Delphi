@@ -4,7 +4,8 @@ program IDSConnectDiagnosticsTests;
 
 uses
   System.SysUtils, System.Classes, System.IOUtils, Winapi.ActiveX,
-  intf.IDSConnect, intf.IDSConnectTypes, intf.IDSConnectDlgWebBrowser;
+  intf.IDSConnect, intf.IDSConnectTypes, intf.IDSConnectDlgWebBrowser,
+  LandrixXmlDom, LandrixXmlXsdSchema, LandrixXmlXsdSchemaLoader, LandrixXmlXsdValidator;
 
 procedure Check(Value: Boolean; const Message: String);
 begin
@@ -118,6 +119,226 @@ begin
     Back.Free;
     Cart.Free;
   end;
+end;
+
+//Fills every field the given version knows, with values at their limits
+procedure FillFullCart(Cart: TIDSConnect_Warenkorb; Version: TIDSConnect_Version);
+var
+  Addr: TIDSConnect_Address;
+  Item: TIDSConnect_OrderItem;
+begin
+  Cart.Clear;
+  Cart.WarenkorbInfo.Version := Version;
+  Cart.WarenkorbInfo.Date := EncodeDate(2026,11,16);
+  Cart.WarenkorbInfo.Time := EncodeTime(12,34,56,0);
+  with Cart.Order.OrderInfo do
+  begin
+    if Version = idsConnectVersion_2_5 then
+    begin
+      InquiryNo := 'ANF-1';
+      OfferNo := 'ANG-1';
+      PartNo := 'BEST-1';
+      OrderConfNo := 'AB-1';
+    end else
+      with Referenzen.AddItem do
+      begin
+        ReferenzNumber := 'BEST-1';
+        ReferenzDate := EncodeDate(2026,11,1);
+        ReferenzType := idsConnectRefType_220;
+      end;
+    DeliveryDate := EncodeDate(2026,12,1);
+    ModeOfShipment := idsConnectMos_Lieferung;
+    ZusatzText := 'Bitte klingeln & warten <hinten>';
+    Kommission := 'Bad Müller';
+    Cur := 'EUR';
+  end;
+  Addr := Cart.Order.CustomerInfo.Address;
+  Cart.Order.CustomerInfo.IDNo := 'K-4711';
+  Addr.Name1 := 'Muster GmbH';
+  Addr.Name2 := 'Sanitär & Heizung';
+  Addr.Name3 := 'z. Hd. Einkauf';
+  if Version = idsConnectVersion_2_5 then
+  begin
+    Addr.Name4 := 'Abteilung';
+    Addr.Street := 'Weg 1';
+  end else
+  begin
+    Addr.Street1 := 'Weg 1';
+    Addr.Street2 := 'Hinterhaus';
+    Addr.Street3 := '3. OG';
+  end;
+  Addr.PCode := '12345';
+  Addr.City := 'Musterstadt';
+  Addr.Country := 'DE';
+  Addr.ILN := '4012345000009';
+  Addr.Contact := 'Max Muster';
+  Addr.Phone := '+49 30 123';
+  Addr.Fax := '+49 30 124';
+  Addr.Email := 'einkauf@example.com';
+  Cart.Order.SupplierInfo.IDNo := 'L-1';
+  Cart.Order.SupplierInfo.Address.Assign(Addr);
+  Cart.Order.DeliveryPlaceInfo.IDNo := 'LO-1';
+  Cart.Order.DeliveryPlaceInfo.Address.Assign(Addr);
+  if Version = idsConnectVersion_2_5_1 then
+  begin
+    Cart.Order.DeliveryPlaceInfo.HasGeoLocation := true;
+    Cart.Order.DeliveryPlaceInfo.GeoLat := 52.5;
+    Cart.Order.DeliveryPlaceInfo.GeoLang := -13.25;
+  end;
+
+  Item := Cart.Order.OrderItems.AddItem;
+  Item.ItemChara := idsConnectIc_normal;
+  Item.RefItems_Customer := '1';
+  Item.RefItems_CustomerSubNo := '1.1';
+  Item.RefItems_Supplier := '10';
+  Item.RefItems_SupplierSubNo := '10.1';
+  Item.EAN := '4012345678901';
+  Item.ManufacturerID := 'GLN-1';
+  Item.ManufacturerIDType := 'GLN';
+  Item.ArtNo := 'ART-1';
+  Item.Qty := 12.5;
+  Item.QU := idsConnectQu_MTR;
+  Item.Kurztext := 'Kupferrohr 15 mm';
+  Item.Langtext := 'Langtext mit Umlauten äöü ß'+sLineBreak+'zweite Zeile';
+  Item.OfferPrice := 123.4567;
+  Item.NetPrice := 99.99;
+  Item.PriceBasis := 100;
+  Item.VAT := 19;
+  Item.TechnClarification := idsConnectTc_No;
+  Item.Hinweis := 'Hinweis';
+  Item.Zuschlag := 1.5;
+  Item.Divers := true;
+  with Item.Rohstoffanteile.AddItem do
+  begin
+    Rohstoff := idsConnectR_CU;
+    Gewichtsanteilswert := 0.35;
+    Gewichtsanteilseinheit := idsConnectQu_KGM;
+    Basiswert := 1;
+    Basiseinheit := idsConnectQu_MTR;
+    Basisnotierung := 150;
+    NotierungAktuell := 812.34;
+  end;
+  if Version = idsConnectVersion_2_5_1 then
+  begin
+    Item.SumMaterialSurcharges := 4.56;
+    Item.DiscountableAmount := 95.43;
+    with Item.Referenzen.AddItem do
+    begin
+      ReferenzNumber := 'AB-1';
+      ReferenzDate := EncodeDate(2026,11,2);
+      ReferenzType := idsConnectRefType_231;
+      ReferenzLine := '10';
+    end;
+  end;
+
+  //Second item with only the mandatory fields
+  Item := Cart.Order.OrderItems.AddItem;
+  Item.ArtNo := 'ART-2';
+  Item.Qty := 1;
+  Item.QU := idsConnectQu_PCE;
+  Item.Kurztext := 'Nur Pflichtfelder';
+end;
+
+//Validates own carts against the itek schemas. The XSDs are not part of the
+//repository (licence); the check runs only where Documentation\ exists.
+procedure CheckXsd(const DocRoot: String);
+const
+  Versions: array[0..1] of TIDSConnect_Version = (idsConnectVersion_2_5, idsConnectVersion_2_5_1);
+  Folders: array[0..1] of String = ('IDSConnect 2.5', 'IDSConnect 2.5.1');
+  Files: array[0..1] of String = ('warenkorb_senden_2_5.xsd', 'warenkorb_senden_2_5_1.xsd');
+var
+  i, k, Variant: Integer;
+  XsdFile, Errors: String;
+  Schema: TLandrixXmlXsdSchemaSet;
+  Validator: TLandrixXmlXsdValidator;
+  Doc: TLandrixXmlDocument;
+  Cart: TIDSConnect_Warenkorb;
+  Checked: Integer;
+begin
+  Checked := 0;
+  for i := 0 to High(Versions) do
+  begin
+    XsdFile := TPath.Combine(TPath.Combine(DocRoot,Folders[i]),Files[i]);
+    if (DocRoot = '') or not FileExists(XsdFile) then
+    begin
+      Writeln('SKIP: XSD validation '+Folders[i]+' (schema not present locally)');
+      continue;
+    end;
+    Schema := LandrixXmlXsdLoadSchema(XsdFile);
+    Validator := nil;
+    Doc := nil;
+    Cart := nil;
+    try
+      Doc := TLandrixXmlDocument.Create;
+      Cart := TIDSConnect_Warenkorb.Create;
+      Validator := TLandrixXmlXsdValidator.Create(Schema);
+      //Variant 0: every field filled; variant 1: an almost empty cart;
+      //variant 2: the alternatives - delivery week/year instead of a date,
+      //error code and text, the raw materials MS/MK (2.5.1 only)
+      for Variant := 0 to 2 do
+      begin
+        if Variant = 0 then
+          FillFullCart(Cart,Versions[i])
+        else if Variant = 2 then
+        begin
+          FillFullCart(Cart,Versions[i]);
+          Cart.Order.OrderInfo.DeliveryDate := 0;
+          Cart.Order.OrderInfo.DeliveryWeek := 48;
+          Cart.Order.OrderInfo.DeliveryYear := 2026;
+          Cart.Order.OrderInfo.ModeOfShipment := idsConnectMos_Abholung;
+          Cart.Order.OrderItems[0].Fehlercode := idsConnectFc_1;
+          Cart.Order.OrderItems[0].Fehlertext := 'Artikel nicht lieferbar';
+          Cart.Order.OrderItems[0].ItemChara := idsConnectIc_alternate;
+          Cart.Order.OrderItems[0].TechnClarification := idsConnectTc_Yes;
+          with Cart.Order.OrderItems[0].Rohstoffanteile.AddItem do
+          begin
+            Rohstoff := idsConnectR_MS;
+            Gewichtsanteilswert := 0.1;
+            Gewichtsanteilseinheit := idsConnectQu_KGM;
+          end;
+          with Cart.Order.OrderItems[0].Rohstoffanteile.AddItem do
+          begin
+            Rohstoff := idsConnectR_MK;
+            Gewichtsanteilswert := 0.2;
+            Gewichtsanteilseinheit := idsConnectQu_KGM;
+          end;
+        end else
+        begin
+          Cart.Clear;
+          Cart.WarenkorbInfo.Version := Versions[i];
+          with Cart.Order.OrderItems.AddItem do
+          begin
+            ArtNo := 'X';
+            Qty := 1;
+            Kurztext := 'Minimal';
+          end;
+        end;
+        Doc.LoadFromString(SaveCart(Cart));
+        if not Validator.ValidateDocument(Doc) then
+        begin
+          Errors := '';
+          for k := 0 to Validator.ErrorCount-1 do
+            Errors := Errors+sLineBreak+'  '+IntToStr(Validator.Errors[k].Line)+': '+
+                      Validator.Errors[k].Code+' '+Validator.Errors[k].Message;
+          raise Exception.Create(Format('%s cart (variant %d) violates %s:%s',
+                                        [Folders[i],Variant,Files[i],Errors]));
+        end;
+        Inc(Checked);
+      end;
+      //Counter-check: the validator must reject a wrong element name, or the
+      //check above proves nothing
+      Doc.LoadFromString(StringReplace(StringReplace(SaveCart(Cart),'<Kurztext>','<Kurztxt>',[]),
+                         '</Kurztext>','</Kurztxt>',[]));
+      Check(not Validator.ValidateDocument(Doc),Folders[i]+': validator accepted a wrong element');
+    finally
+      Cart.Free;
+      Doc.Free;
+      Validator.Free;
+      Schema.Free;
+    end;
+  end;
+  if Checked > 0 then
+    Writeln(Format('PASS: %d own carts valid against the local itek XSDs',[Checked]));
 end;
 
 procedure Run;
@@ -339,6 +560,7 @@ begin
     end;
 
     CheckSerializer(LastError);
+    CheckXsd(ParamStr(2));
     Writeln('PASS: serializer versions, dropped 2.5.1 fields, forbidden characters');
     LastError := '';
     TIDSConnect.IDSConnectADT('','c','u','p','x',TPath.GetTempPath);
