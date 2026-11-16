@@ -352,7 +352,8 @@ Username=...
 Password=...
 Customernumber=...
 IDSConnectUrl=https://...
-Version=2.5.1
+; optional, sonst per SV ermittelt
+Version=2.5
 ; optional, füllt das Feld Artikelnummer
 DemoArticle=...
 ; optional, Shop beherrscht die Mehrfachrückgabe
@@ -367,8 +368,14 @@ unterstützten Schnittstellenversionen und die benötigten Anmeldedaten ab.
 Die Abfrage ändert die konfigurierte Version nicht.
 
 `Version` wird **je Anbieter** eingetragen: erlaubt sind `2.5` und `2.5.1`.
-Ohne Schlüssel gilt weiterhin `2.5.1`; ein leerer oder ungültiger Wert wird
-als Konfigurationsfehler angezeigt und verhindert den Aufruf. Die Einstellung
+Fehlt der Eintrag oder ist er leer, fragt das Beispiel den Shop beim ersten
+Aufruf per SV und nimmt die höchste gemeinsame Version; beantwortet der Shop
+SV nicht oder nennt er nur Versionen vor 2.5, nimmt es 2.5 (im zweiten Fall mit
+Hinweis, dass der Aufruf scheitern kann). Das Ergebnis steht im Protokoll und gilt bis zum
+nächsten Laden der Ini. Früher galt ohne Eintrag 2.5.1 – das meldet keiner
+der Shops in der Lieferantentabelle, Buderus lehnt es bei der Rückgabe ab.
+Ein ungültiger Wert wird als Konfigurationsfehler angezeigt und verhindert
+den Aufruf. Die Einstellung
 gilt für WKE, WKS, ADL, AS, SV und LI. Bei WKS stimmen Formularversion und
 Warenkorb-XML überein. Bei AS werden die Parameter `multipleResult` und
 `hookURLTimeout` nur für 2.5.1 übertragen; das lokale Zeitlimit bleibt aktiv.
@@ -475,8 +482,8 @@ ausprobieren, im Zweifel zuerst 2.5.
 Die Liste des Shops liefert `IDSConnectSV`; `IDSConnectSVBestVersion` wählt daraus
 die höchste gemeinsame Version mit dieser Unit (2.5 oder 2.5.1). Im
 Beispielprojekt zeigt „Shop-Infos (SV / LI)“ beides an. Die Unit sendet ohne
-Angabe 2.5.1; im Beispiel steht die Version je Lieferant als `Version=` in
-der `config.ini`.
+Angabe 2.5.1; das Beispiel fragt ohne `Version=` in der `config.ini` per SV
+nach und nimmt ohne Antwort 2.5.
 
 ## Besonderheiten
 

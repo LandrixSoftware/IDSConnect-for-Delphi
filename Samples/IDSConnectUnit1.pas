@@ -6,7 +6,8 @@ uses
   Winapi.Windows, Winapi.Messages, System.SysUtils, System.Variants,
   System.Classes, Vcl.Graphics,Vcl.Controls, Vcl.Forms, System.UITypes,
   Vcl.Dialogs, Vcl.StdCtrls, System.Inifiles, System.StrUtils, System.IOUtils,
-  System.DateUtils, System.Math, Vcl.ComCtrls, LandrixXmlDom, LandrixXmlWriter
+  System.DateUtils, System.Math, Vcl.ComCtrls, System.Generics.Collections,
+  LandrixXmlDom, LandrixXmlWriter
   ,intf.IDSConnectTypes,intf.IDSConnect,intf.IDSConnectDlgWebBrowser, Vcl.ExtCtrls;
 
 type
@@ -55,7 +56,11 @@ type
     //                     Abfrage "LI" (Schalter "Shop-Infos")
     //IDSConnectUrl=https://...
     //                     Einstiegsadresse der IDS-Schnittstelle des Shops
-    //Version=2.5.1       2.5 oder 2.5.1; ohne Eintrag bisheriger Standard 2.5.1
+    //Version=2.5         optional, 2.5 oder 2.5.1. Ohne Eintrag fragt das
+    //                     Beispiel den Shop einmal per SV und nimmt die hoechste
+    //                     gemeinsame Version, ohne Antwort 2.5. Kein Shop der
+    //                     Lieferantentabelle meldet bisher 2.5.1 - der fruehere
+    //                     Standard 2.5.1 scheiterte z. B. bei Buderus.
     //DemoArticle=...      optional; Artikelnummer, die beim Auswaehlen des
     //                     Anbieters in das Feld Artikelnummer uebernommen wird
     //MultipleResult=1     optional; der Shop beherrscht die Mehrfachrueckgabe
@@ -66,6 +71,18 @@ type
     //                     werden.
 
     cfg : TMemIniFile;
+    //Per SV ermittelte Versionen je Anbieter (Schluessel: Abschnittsname in
+    //Kleinbuchstaben, wie TMemIniFile ohne Gross-/Kleinschreibung), damit
+    //nicht jeder Aufruf erneut fragt; wird beim Laden der Ini geleert.
+    //Ein Woerterbuch statt TStringList.Values: ein "=" im Abschnittsnamen
+    //verwechselte dort die Eintraege.
+    FDetectedVersions : TDictionary<String,String>;
+    //Antwort der SV-Abfrage, die ReadShopVersion gerade fuer die Erkennung
+    //gestellt hat - der Schalter "Shop-Infos" zeigt sie an, statt ein
+    //zweites Mal zu fragen
+    FSvFromDetection : Boolean;
+    FSvAnswered : Boolean;
+    FSvList : TStringList;
     FPages : TPageControl;
     FRawMemo, FCartMemo : TMemo;
     FResponseBody : TBytes;
@@ -119,9 +136,53 @@ end;
 
 function TMainForm.ReadShopVersion(out _Version : TIDSConnect_Version) : Boolean;
 var
-  lValue : String;
+  lValue, lUrl : String;
+  lDetected : TIDSConnect_Version;
 begin
-  lValue := Trim(cfg.ReadString(SelectedSection,'Version','2.5.1'));
+  lValue := Trim(cfg.ReadString(SelectedSection,'Version',''));
+  if lValue = '' then
+  begin
+    //Keine Version eingetragen: einmal beim Shop nachfragen. Frueher galt
+    //dann 2.5.1, das kein bekannter Shop meldet.
+    if not FDetectedVersions.TryGetValue(LowerCase(SelectedSection),lValue) then
+    begin
+      lDetected := idsConnectVersion_Unkown;
+      FSvList.Clear;
+      FSvAnswered := false;
+      lUrl := cfg.ReadString(SelectedSection,'IDSConnectUrl','');
+      if lUrl <> '' then
+      begin
+        Screen.Cursor := crHourGlass;
+        try
+          FSvAnswered := TIDSConnect.IDSConnectSV(lUrl,FSvList,idsConnectVersion_2_5);
+        finally
+          Screen.Cursor := crDefault;
+        end;
+        FSvFromDetection := true;
+        if FSvAnswered then
+          lDetected := TIDSConnect.BestSupportedVersion(FSvList);
+      end;
+      if lDetected <> idsConnectVersion_Unkown then
+      begin
+        lValue := TIDSConnectHelper.VersionToStr(lDetected);
+        Memo1.Lines.Add('Keine Version in '+ConfigFilename+' ['+SelectedSection+']: '+
+                        'laut Versionsabfrage (SV) '+lValue+'.');
+      end else
+      begin
+        lValue := '2.5';
+        if FSvAnswered then
+          //Der Shop antwortet, nennt aber nur Versionen vor 2.5 - die kann
+          //diese Unit nicht erzeugen; 2.5 ist dann ein Versuch
+          Memo1.Lines.Add('Keine Version in '+ConfigFilename+' ['+SelectedSection+']: '+
+                          'der Shop meldet nur '+FSvList.CommaText+', diese Unit kann ab 2.5 - '+
+                          'verwende 2.5, der Aufruf scheitert womöglich.')
+        else
+          Memo1.Lines.Add('Keine Version in '+ConfigFilename+' ['+SelectedSection+'] und keine '+
+                          'Antwort auf die Versionsabfrage (SV): verwende 2.5.');
+      end;
+      FDetectedVersions.AddOrSetValue(LowerCase(SelectedSection),lValue);
+    end;
+  end;
   _Version := TIDSConnectHelper.VersionFromStr(lValue);
   Result := (lValue = '2.5') or (lValue = '2.5.1');
   if not Result then
@@ -385,10 +446,12 @@ var
   lLogin : TIDSConnect_LoginInfo;
   lVersions : TStringList;
   lVersion : TIDSConnect_Version;
+  lAnswered : Boolean;
 begin
   Memo1.Clear;
   if SelectedSection = '' then
     exit;
+  FSvFromDetection := false;
   if not ReadShopVersion(lVersion) then
     exit;
   lUrl := cfg.ReadString(SelectedSection,'IDSConnectUrl','');
@@ -398,13 +461,22 @@ begin
   Screen.Cursor := crHourGlass;
   try
     Memo1.Lines.Add('Abfrage an '+lUrl);
-    Memo1.Lines.Add('Konfigurierte Version: '+TIDSConnectHelper.VersionToStr(lVersion));
+    Memo1.Lines.Add('Verwendete Version: '+TIDSConnectHelper.VersionToStr(lVersion));
     Memo1.Lines.Add('');
 
     //Aktion "SV": welche Schnittstellenversionen kann der Shop?
     lVersions := TStringList.Create;
     try
-      if TIDSConnect.IDSConnectSV(lUrl,lVersions,lVersion) then
+      //Hat ReadShopVersion gerade erst per SV gefragt, deren Antwort zeigen
+      //statt ein zweites Mal zu fragen (bei einem stummen Shop zweimal Timeout)
+      if FSvFromDetection then
+      begin
+        lAnswered := FSvAnswered;
+        lVersions.Assign(FSvList);
+      end else
+        lAnswered := TIDSConnect.IDSConnectSV(lUrl,lVersions,lVersion);
+      FSvFromDetection := false;
+      if lAnswered then
       begin
         Memo1.Lines.Add('Unterstützte Versionen: '+lVersions.CommaText);
         //Dieselbe Liste auswerten statt einer zweiten SV-Abfrage
@@ -635,6 +707,9 @@ var
   i : Integer;
 begin
   if Assigned(cfg) then begin cfg.Free; cfg := nil; end;
+  //Geaenderte Ini: Versionen neu ermitteln
+  FDetectedVersions.Clear;
+  FSvFromDetection := false;
 
   if not FileExists(ConfigFilename) then
   begin
@@ -650,8 +725,8 @@ begin
                         'IDSConnectUrl=https://...'+sLineBreak+
                         //Kommentare auf eigenen Zeilen: TMemIniFile liest einen
                         //Kommentar hinter dem Wert mit ("1 ; ..." ist kein Boolean)
-                        '; 2.5 oder 2.5.1'+sLineBreak+
-                        'Version=2.5.1'+sLineBreak+
+                        '; optional, 2.5 oder 2.5.1 - ohne Eintrag per SV ermittelt'+sLineBreak+
+                        'Version=2.5'+sLineBreak+
                         '; optional, füllt das Feld Artikelnummer'+sLineBreak+
                         'DemoArticle=...'+sLineBreak+
                         '; optional, Shop beherrscht die Mehrfachrückgabe'+sLineBreak+
@@ -680,6 +755,8 @@ end;
 
 procedure TMainForm.FormCreate(Sender: TObject);
 begin
+  FDetectedVersions := TDictionary<String,String>.Create;
+  FSvList := TStringList.Create;
   CreateResultViews;
   Memo1.Clear;
   TIDSConnect.IDSCONNECT_ONERROR := HandleIDSError;
@@ -693,6 +770,8 @@ procedure TMainForm.FormDestroy(Sender: TObject);
 begin
   TIDSConnect.IDSCONNECT_ONERROR := nil;
   if Assigned(cfg) then begin cfg.Free; cfg := nil; end;
+  FreeAndNil(FDetectedVersions);
+  FreeAndNil(FSvList);
 end;
 
 end.
