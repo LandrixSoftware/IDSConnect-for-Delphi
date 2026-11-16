@@ -452,14 +452,39 @@ Kodierungserkennung, Namensraum-Präfixe und gemischten Inhalt.
 
 # Lieferanten mit IDS-Connect-Unterstützung
 
-| Lieferant | ja | geplant | nein | Version |
-|----------|----------|----------|----------|----------
-| Pfeiffer & May | x | - | - | 2.5 |
-| GC-Gruppe | x | - | - | |
-| Pietsch | x | - | - | |
-| Pürsch | - | - | x | |
-| Sanitär-Heinze | x | - | - | |
-| ZVSHK | x | - | - | |
+| Lieferant | ja | geplant | nein | Version | Besonderheiten |
+|----------|----------|----------|----------|----------|----------|
+| Buderus | x | - | - | 2.5 | siehe unten |
+| GC-Gruppe (GC ONLINE PLUS) | x | - | - | | keine SV-Abfrage (HTTP 500) |
+| HSH Rose | x | - | - | | keine SV-Abfrage |
+| MAINMETALL | x | - | - | 2.5 | |
+| Mosecker | x | - | - | | keine SV-Abfrage |
+| Pfeiffer & May | x | - | - | 2.5 | |
+| Pietsch | x | - | - | | |
+| Pürsch | - | - | x | | |
+| Sanitär-Heinze | x | - | - | | |
+| SOLVIS | x | - | - | | keine SV-Abfrage |
+| Sto SE & Co. KGaA | - | x | - | | |
+| WIEDEMANN | x | - | - | | keine SV-Abfrage |
+| Zander | x | - | - | | SV nicht unterstützt (JSON-Fehler) |
+| ZVSHK | x | - | - | | |
+
+Die Spalte *Version* nennt die höchste Version, die der Shop per SV meldet
+(abgefragt am 16.11.2026); leer, wenn er SV nicht beantwortet – dann hilft nur
+ausprobieren, im Zweifel zuerst 2.5.
+Die Liste des Shops liefert `IDSConnectSV`; `IDSConnectSVBestVersion` wählt daraus
+die höchste gemeinsame Version mit dieser Unit (2.5 oder 2.5.1). Im
+Beispielprojekt zeigt „Shop-Infos (SV / LI)“ beides an. Die Unit sendet ohne
+Angabe 2.5.1; im Beispiel steht die Version je Lieferant als `Version=` in
+der `config.ini`.
+
+## Besonderheiten
+
+* **Buderus** (`https://www.onlineshop.buderus.de/ids`, geprüft am
+  16.11.2026): unterstützt laut SV höchstens 2.5. Mit `version=2.5.1` klappt
+  die Anmeldung, die Rückgabe des Warenkorbs scheitert aber im Shop mit der
+  Meldung „Ungültiger Wert“. Mit `Version=2.5` funktioniert WKE im
+  integrierten Browser; eine leere Kundennummer stört nicht.
 
 # Lizenz / License IDSConnect-for-Delphi
 
