@@ -29,6 +29,7 @@ type
     Panel1: TPanel;
     FSaveResponse: TButton;
     FHeatinglabel: TButton;
+    FHeatinglabelCart: TButton;
     procedure FormCreate(Sender: TObject);
     procedure FormDestroy(Sender: TObject);
     procedure Button1Click(Sender: TObject);
@@ -40,6 +41,7 @@ type
     procedure Button6Click(Sender: TObject);
     procedure SaveResponseClick(Sender : TObject);
     procedure HeatinglabelClick(Sender: TObject);
+    procedure HeatinglabelCartClick(Sender: TObject);
   private
     //Aufbau der Ini-Datei mit Lieferanten
     //
@@ -90,6 +92,15 @@ type
     FPages : TPageControl;
     FRawMemo, FCartMemo : TMemo;
     FResponseBody : TBytes;
+    //Zuletzt empfangener Warenkorb (WKE, WKS mit Rueckgabe, AS) und sein
+    //Anbieter; der Schalter "Heatinglabel aus Warenkorb" sendet dessen
+    //Positionen mit EAN an die Heatinglabel-Plattform
+    FLastCart : TIDSConnect_Warenkorb;
+    FLastCartSection : String;
+    procedure RememberCart(_Warenkorb : TIDSConnect_Warenkorb);
+    //Gemeinsamer Teil beider Heatinglabel-Schalter: Version, Hook-URL,
+    //Plattform-Adresse, Aufruf und Anzeige der Rueckgabe
+    procedure SendHeatinglabel(_Label : TIDSConnect_Heatinglabel);
     procedure CreateResultViews;
     procedure HandleIDSRequest(const _Url,_Parameters : String);
     procedure HandleIDSResponse(const _Url : String; _StatusCode : Integer;
@@ -567,6 +578,7 @@ begin
     Memo1.Lines.Add('Ergebnis: Rückgabe empfangen und als Warenkorb eingelesen.');
     Memo1.Lines.Add('Dies ist keine XML-Schema- oder fachliche Vollständigkeitsprüfung.');
     ShowReceivedCart(lWarenkorb);
+    RememberCart(lWarenkorb);
   finally
     TIDSConnect.IDSCONNECT_ONREQUEST := lOldRequest;
     TIDSConnect.IDSCONNECT_ONRESPONSE := lOldResponse;
@@ -666,20 +678,23 @@ begin
     end;
 
     ShowWarenkorb(lWarenkorb);
+    RememberCart(lWarenkorb);
   finally
     lWarenkorb.Free;
   end;
 end;
 
-procedure TMainForm.HeatinglabelClick(Sender: TObject);
+procedure TMainForm.RememberCart(_Warenkorb: TIDSConnect_Warenkorb);
+begin
+  FLastCart.Assign(_Warenkorb);
+  FLastCartSection := SelectedSection;
+end;
+
+procedure TMainForm.SendHeatinglabel(_Label: TIDSConnect_Heatinglabel);
 var
-  lLabel : TIDSConnect_Heatinglabel;
   lVersion : TIDSConnect_Version;
   lUrl : String;
 begin
-  Memo1.Clear;
-  if SelectedSection = '' then
-    exit;
   if not ReadShopVersion(lVersion) then
     exit;
   if not PrepareHookUrl then
@@ -690,12 +705,82 @@ begin
   if lUrl = '' then
     lUrl := cfg.ReadString(SelectedSection,'IDSConnectUrl','');
 
+  if not TIDSConnect.IDSConnectHLS(
+            lUrl,
+            cfg.ReadString(SelectedSection,'Customernumber',''),
+            cfg.ReadString(SelectedSection,'Username',''),
+            cfg.ReadString(SelectedSection,'Password',''),
+            TempHtmlFilename,
+            _Label,lVersion) then
+  begin
+    Memo1.Lines.Add('Es wurde kein Heatinglabel übernommen.');
+    exit;
+  end;
+  ShowHeatinglabel(_Label);
+end;
+
+procedure TMainForm.HeatinglabelCartClick(Sender: TObject);
+var
+  lLabel : TIDSConnect_Heatinglabel;
+  lCount : Integer;
+begin
+  Memo1.Clear;
+  if SelectedSection = '' then
+  begin
+    Memo1.Lines.Add('Bitte zuerst einen Anbieter auswählen.');
+    exit;
+  end;
+  if FLastCart.Order.OrderItems.Count = 0 then
+  begin
+    Memo1.Lines.Add('Es liegt noch kein empfangener Warenkorb vor.');
+    Memo1.Lines.Add('Zuerst mit "Warenkorb empfangen" im Shop die Anlagenteile '+
+                    '(z. B. Kessel, Regler, Speicher, Solarkollektoren) zurückgeben.');
+    exit;
+  end;
+  //Die EANs stammen aus dem Shop eines Anbieters; an eine andere Plattform
+  //geschickt, wuerde das Ergebnis nur verwirren
+  if not SameText(FLastCartSection,SelectedSection) then
+    if MessageDlg('Der letzte Warenkorb stammt von "'+FLastCartSection+'".'+sLineBreak+
+                  'Trotzdem an "'+SelectedSection+'" senden?',
+                  mtConfirmation,[mbYes,mbNo],0) <> mrYes then
+      exit;
+
+  lLabel := TIDSConnect_Heatinglabel.Create;
+  try
+    //Anlagenfunktion und -typ bleiben offen; die Plattform ermittelt sie aus
+    //den Komponenten
+    lLabel.Header.PackageSupplier := 'Musterbetrieb Heizung';
+    lLabel.Header.IncludeProductLabels := true;
+    //Uebernimmt nur Positionen mit EAN; die uebrigen meldet die Unit ueber
+    //IDSCONNECT_ONERROR
+    lCount := lLabel.AddFromWarenkorb(FLastCart);
+    Memo1.Lines.Add(Format('Heatinglabel aus dem Warenkorb von "%s": %d von %d Positionen mit EAN.',
+      [FLastCartSection,lCount,FLastCart.Order.OrderItems.Count]));
+    if lCount = 0 then
+    begin
+      Memo1.Lines.Add('Ohne EAN kann die Plattform keine Komponente zuordnen - nichts gesendet.');
+      exit;
+    end;
+    SendHeatinglabel(lLabel);
+  finally
+    lLabel.Free;
+  end;
+end;
+
+procedure TMainForm.HeatinglabelClick(Sender: TObject);
+var
+  lLabel : TIDSConnect_Heatinglabel;
+begin
+  Memo1.Clear;
+  if SelectedSection = '' then
+    exit;
+
   lLabel := TIDSConnect_Heatinglabel.Create;
   try
     //Beispielanlage: Gas-Brennwertkessel, Regler und zwei Solarkollektoren.
     //Die GTINs sind Platzhalter - eine echte Plattform meldet sie als
-    //NotFound. In der Handwerkssoftware kommen sie aus den Artikeldaten
-    //(EAN), z. B. mit lLabel.AddFromWarenkorb(Warenkorb).
+    //NotFound. Mit echten Artikeln: Schalter "Heatinglabel aus Warenkorb"
+    //(lLabel.AddFromWarenkorb mit dem zuletzt empfangenen Warenkorb).
     lLabel.Header.PackageFunction := idsHlPf_Combination;
     lLabel.Header.PackageType := idsHlPt_CombinationBoiler;
     lLabel.Header.LoadProfile := idsHlLp_XL;
@@ -723,19 +808,7 @@ begin
       Qty := 2;
       RefItems_Customer := '3';
     end;
-
-    if not TIDSConnect.IDSConnectHLS(
-              lUrl,
-              cfg.ReadString(SelectedSection,'Customernumber',''),
-              cfg.ReadString(SelectedSection,'Username',''),
-              cfg.ReadString(SelectedSection,'Password',''),
-              TempHtmlFilename,
-              lLabel,lVersion) then
-    begin
-      Memo1.Lines.Add('Es wurde kein Heatinglabel übernommen.');
-      exit;
-    end;
-    ShowHeatinglabel(lLabel);
+    SendHeatinglabel(lLabel);
   finally
     lLabel.Free;
   end;
@@ -825,6 +898,7 @@ begin
     end;
 
     ShowWarenkorb(lWarenkorb);
+    RememberCart(lWarenkorb);
   finally
     lWarenkorb.Free;
   end;
@@ -885,6 +959,7 @@ procedure TMainForm.FormCreate(Sender: TObject);
 begin
   FDetectedVersions := TDictionary<String,String>.Create;
   FSvList := TStringList.Create;
+  FLastCart := TIDSConnect_Warenkorb.Create;
   CreateResultViews;
   Memo1.Clear;
   TIDSConnect.IDSCONNECT_ONERROR := HandleIDSError;
@@ -900,6 +975,7 @@ begin
   if Assigned(cfg) then begin cfg.Free; cfg := nil; end;
   FreeAndNil(FDetectedVersions);
   FreeAndNil(FSvList);
+  FreeAndNil(FLastCart);
 end;
 
 end.

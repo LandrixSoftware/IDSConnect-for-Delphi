@@ -116,7 +116,12 @@ mit HLS-Unterstützung ist uns noch nicht bekannt; getestet ist der Ablauf
 gegen die Schemas und einen simulierten Hook-Server. Im Beispielprojekt
 sendet der Schalter „Heatinglabel (HLS)" eine Beispielanlage an
 `HeatinglabelUrl` bzw. die IDS-Adresse des Anbieters und legt die PDFs unter
-`Dokumente\IDSConnect-Heatinglabel` ab.
+`Dokumente\IDSConnect-Heatinglabel` ab. Die GTINs dieser Anlage sind
+Platzhalter. Mit echten Artikeln arbeitet „Heatinglabel aus Warenkorb": Er
+übernimmt per `AddFromWarenkorb` alle Positionen mit EAN aus dem zuletzt
+empfangenen Warenkorb (WKE, WKS mit Rückgabe oder AS). Dazu im Shop die
+Anlagenteile (z. B. Kessel, Regler, Speicher, Solarkollektoren) in den
+Warenkorb legen und mit „Warenkorb empfangen" zurückgeben.
 
 ## Version 2.5 oder 2.5.1
 

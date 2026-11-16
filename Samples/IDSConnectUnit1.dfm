@@ -158,4 +158,13 @@ object MainForm: TMainForm
     TabOrder = 13
     OnClick = HeatinglabelClick
   end
+  object FHeatinglabelCart: TButton
+    Left = 464
+    Top = 862
+    Width = 170
+    Height = 25
+    Caption = 'Heatinglabel aus Warenkorb'
+    TabOrder = 14
+    OnClick = HeatinglabelCartClick
+  end
 end
