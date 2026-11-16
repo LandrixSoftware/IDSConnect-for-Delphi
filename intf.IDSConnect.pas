@@ -91,6 +91,8 @@ type
                                    //IDSCONNECT_MAX_COLLECT, es kann mehr vorliegen
     end;
   private type
+    //Liest eine abgeholte Rueckgabe ein (Warenkorb oder Heatinglabel)
+    TResultLoader = reference to function(_Stream : TStream) : Boolean;
     TValidateCertificatHelper = class(TObject)
       procedure DoValidateCertificateEvent(const Sender: TObject;
                    const ARequest: TURLRequest; const Certificate: TCertificate;
@@ -105,7 +107,6 @@ type
     class procedure NotifyResponse(const _Url : String; _StatusCode : Integer; const _Body : TBytes);
     class function GetUuid : String;
     class function HookUrlWithSid(const _Sid : String) : String;
-    class function TryFetchResult(const _Url : String;_Warenkorb : TIDSConnect_Warenkorb) : Boolean; overload;
     //Wie TryFetchResult, liefert zusaetzlich die Rohdaten der Antwort und die
     //Kennung der Uebertragung (Header X-IDSConnect-Id, leer, wenn der Server
     //keine sendet). Mit _Warenkorb = nil wird nur heruntergeladen: true, wenn
@@ -139,6 +140,20 @@ type
     class function ShowFormAndFetch(_Form : TStrings; const _TmpFilename,_ResultUrl : String;
                                     _Warenkorb : TIDSConnect_Warenkorb; _TimeoutSec : Integer;
                                     _MultipleResult : Boolean = false) : Boolean;
+    //Wie ShowFormAndFetch, eine einzelne Rueckgabe wird ueber _Loader
+    //eingelesen; _What ("Warenkorb", "Heatinglabel") steht in den Meldungen,
+    //_WaitHint im Warte-Dialog. _Warenkorb nur fuer _MultipleResult.
+    class function ShowFormAndFetchWith(_Form : TStrings; const _TmpFilename,_ResultUrl : String;
+                                    const _Loader : TResultLoader; const _What,_WaitHint : String;
+                                    _Warenkorb : TIDSConnect_Warenkorb; _TimeoutSec : Integer;
+                                    _MultipleResult : Boolean) : Boolean;
+    //Ein Abruf der Hook-URL, eingelesen ueber _Loader; 404 oder leer: false
+    //ohne Fehlertext
+    class function FetchWith(const _Url : String; const _Loader : TResultLoader;
+                             const _What : String; out _Error : String) : Boolean;
+    //Warte-Dialog fuer eine einzelne Rueckgabe
+    class function WaitForSingle(const _Url : String; const _Loader : TResultLoader;
+                                 const _What,_WaitHint : String; _TimeoutSec : Integer) : Boolean;
   public
     //Loescht eine Datei nach _DelaySec Sekunden in einem Hintergrund-Thread
     //(0 oder kleiner: sofort); noch ausstehende Dateien beim Programmende
@@ -148,6 +163,9 @@ type
     //HTTP-/Parserfehler: false und Fehlertext. Rohe Antwort ueber ONRESPONSE.
     class function TryFetchResult(const _Url : String;_Warenkorb : TIDSConnect_Warenkorb;
                                   out _Error : String) : Boolean; overload;
+    //Wie TryFetchResult fuer die Rueckgabe einer Heatinglabel-Plattform
+    class function TryFetchHeatinglabel(const _Url : String; _Heatinglabel : TIDSConnect_Heatinglabel;
+                                        out _Error : String) : Boolean;
     //Haengt die Positionen einer Rueckgabe an den Zielwarenkorb an. Wird bei
     //der Mehrfachrueckgabe (multipleResult, ab IDS 2.5.1) gebraucht und steht
     //auch fuer eine eigene Ablaufsteuerung zur Verfuegung.
@@ -198,6 +216,16 @@ type
     class function  IDSConnectAS(_ServiceURL,_Cst,_UN,_Pwd,_TmpFilename,_SearchString : String;_Warenkorb : TIDSConnect_Warenkorb;
                                  _MultipleResult : Boolean = false;_HookUrlTimeout : Integer = 0;
                                  _Version : TIDSConnect_Version = idsConnectVersion_2_5_1) : Boolean;
+    //Aktion "HLS" (Heatinglabel senden, ab IDS 2.3): sendet die Artikelliste
+    //einer Heizungsanlage an eine Plattform, die das ErP-Label berechnet, und
+    //wartet auf die Rueckgabe ueber die Hook-URL. Danach enthaelt
+    //_Heatinglabel die Liste der Plattform (Status je Position, Label als
+    //PDF); scheitert das, bleibt die gesendete Liste erhalten.
+    //Die Hook-URL muss das Feld "heatinglabel" annehmen (idsconnect.php ab
+    //dieser Version).
+    class function  IDSConnectHLS(const _ServiceURL,_Cst,_UN,_Pwd,_TmpFilename : String;
+                                  _Heatinglabel : TIDSConnect_Heatinglabel;
+                                  _Version : TIDSConnect_Version = idsConnectVersion_2_5_1) : Boolean;
   end;
 
   TIDSConnectHelper = class(TObject)
@@ -264,12 +292,32 @@ type
     //function SaveToFile(_Options : TIDS_Warenkorb_GenerateOptions;_Filename : String) : Boolean;
   end;
 
+  TIDSConnect_HeatinglabelHelper = class helper for TIDSConnect_Heatinglabel
+  private
+    function  idsHeatinglabel(_Node : TLandrixXmlNode) : Boolean;
+    function  idsHeader(_Node : TLandrixXmlNode) : Boolean;
+    function  idsPosition(_Node : TLandrixXmlNode) : Boolean;
+    function  idsPDF(_Node : TLandrixXmlNode; _Obj : TIDSConnect_HeatinglabelPDF; const _Where : String) : Boolean;
+  public
+    //Liest eine Rueckgabe (heatinglabel_empfangen); nur bei Erfolg wird der
+    //bisherige Inhalt ersetzt. Die PDFs werden dekodiert.
+    function LoadFromFile(const _Filename : String) : Boolean;
+    function LoadFromStream(_Stream : TStream) : Boolean;
+    //Erzeugt das XML zum Senden (heatinglabel_senden). false, wenn eine
+    //Position weder GTIN noch Lieferanten-ID und Produktnummer hat.
+    function SaveToString(_Val : TStringBuilder) : Boolean;
+    //Haengt die Positionen eines Warenkorbs mit EAN als GTIN an (Kurztext,
+    //Menge, Positionsnummer); Positionen ohne EAN werden gemeldet. Ergebnis:
+    //Anzahl der uebernommenen Positionen.
+    function AddFromWarenkorb(_Warenkorb : TIDSConnect_Warenkorb) : Integer;
+  end;
+
 implementation
 
 uses
   System.Math, System.DateUtils, System.StrUtils, Winapi.ShellAPI,
   Winapi.Windows, System.Net.HttpClient, System.Net.Mime, System.SyncObjs,
-  System.Generics.Collections,
+  System.Generics.Collections, System.NetEncoding,
   intf.IDSConnectDlgWebBrowser, intf.IDSConnectDlgWait;
 
 const
@@ -278,6 +326,8 @@ const
   TIDSConnect_XMLSchemaSendShoppingCart_2_5_1    = TIDSConnect_XMLNameSpace+'warenkorb_senden_2_5_1.xsd';
   TIDSConnect_XMLSchemaReceiveShoppingCart_2_5   = TIDSConnect_XMLNameSpace+'warenkorb_empfangen_2_5.xsd';
   TIDSConnect_XMLSchemaReceiveShoppingCart_2_5_1 = TIDSConnect_XMLNameSpace+'warenkorb_empfangen_2_5_1.xsd';
+  TIDSConnect_XMLNameSpaceHeatinglabel = 'http://www.itek.de/Shop-Anbindung/Heatinglabel/';
+  TIDSConnect_XMLSchemaSendHeatinglabel = TIDSConnect_XMLNameSpaceHeatinglabel+'heatinglabel_senden_2-5.xsd';
   //Aktuelle Schnittstellenversion, die diese Unit erzeugt
   TIDSConnect_CurrentVersionStr = '2.5.1';
 
@@ -2560,6 +2610,441 @@ begin
   Result := _Node.NodeType <> xntElement;
 end;
 
+{ TIDSConnect_HeatinglabelHelper }
+
+//Index eines Codes in einer Heatinglabel-Codeliste (Gross-/Kleinschreibung
+//egal). Ein unbekannter Wert wird gemeldet und ergibt 0 ("nicht angegeben").
+function ReadHlCode(const _Codes : array of String; const _Text, _What : String) : Integer;
+var
+  i : Integer;
+  lVal : String;
+begin
+  Result := 0;
+  lVal := Trim(_Text);
+  if lVal = '' then
+    exit;
+  for i := 1 to High(_Codes) do
+    if SameText(_Codes[i],lVal) then
+      exit(i);
+  TIDSConnect.ReportError(Format('Heatinglabel: unbekannter Wert "%s" für %s; nicht übernommen.',
+                          [lVal,_What]),nil);
+end;
+
+function HlNodeIs(_Node : TLandrixXmlNode; const _Name : String) : Boolean;
+begin
+  Result := SameText(_Node.LocalName,_Name);
+end;
+
+function TIDSConnect_HeatinglabelHelper.idsPDF(_Node: TLandrixXmlNode;
+  _Obj: TIDSConnect_HeatinglabelPDF; const _Where : String): Boolean;
+var
+  i, j : Integer;
+  lChild : TLandrixXmlNode;
+  lData : String;
+  lOk : Boolean;
+begin
+  Result := true;
+  for i := 0 to _Node.ChildCount-1 do
+  begin
+    lChild := _Node.Children[i];
+    if lChild.NodeType <> xntElement then
+      continue;
+    if HlNodeIs(lChild,'PDFName') then
+      _Obj.PDFName := Trim(NodeText(lChild))
+    else if HlNodeIs(lChild,'PDFType') then
+      _Obj.PDFType := TIDSConnect_HLPDFType(ReadHlCode(IDS_HL_PDFTYPE_CODES,NodeText(lChild),'PDFType ('+_Where+')'))
+    else if HlNodeIs(lChild,'PDFData') then
+    begin
+      //xs:base64Binary darf Leerraum (Zeilenumbrueche) enthalten
+      lData := NodeText(lChild);
+      lData := StringReplace(lData,#13,'',[rfReplaceAll]);
+      lData := StringReplace(lData,#10,'',[rfReplaceAll]);
+      lData := StringReplace(lData,#9,'',[rfReplaceAll]);
+      lData := StringReplace(lData,' ','',[rfReplaceAll]);
+      //Laenge, Zeichen und Fuellzeichen pruefen: der Delphi-Dekoder
+      //ueberspringt ein '=' an falscher Stelle stillschweigend und lieferte
+      //so eine verkuerzte Datei ohne Meldung
+      lOk := (Length(lData) mod 4) = 0;
+      if lOk then
+        for j := 1 to Length(lData) do
+          if not CharInSet(lData[j],['A'..'Z','a'..'z','0'..'9','+','/','=']) then
+          begin
+            lOk := false;
+            break;
+          end;
+      if lOk then
+      begin
+        j := Pos('=',lData);
+        lOk := (j = 0) or ((j >= Length(lData)-1) and
+                           (Copy(lData,j,MaxInt) = StringOfChar('=',Length(lData)-j+1)));
+      end;
+      if lOk then
+        _Obj.Data := TNetEncoding.Base64.DecodeStringToBytes(lData)
+      else
+      begin
+        _Obj.Data := nil;
+        TIDSConnect.ReportError(Format('Heatinglabel: Die PDF-Datei "%s" (%s) ist nicht gültig base64-kodiert und wurde verworfen.',
+                                [_Obj.PDFName,_Where]),nil);
+      end;
+    end;
+  end;
+end;
+
+function TIDSConnect_HeatinglabelHelper.idsHeader(_Node: TLandrixXmlNode): Boolean;
+var
+  i : Integer;
+  lChild : TLandrixXmlNode;
+  lText : String;
+begin
+  Result := true;
+  for i := 0 to _Node.ChildCount-1 do
+  begin
+    lChild := _Node.Children[i];
+    if lChild.NodeType <> xntElement then
+      continue;
+    lText := NodeText(lChild);
+    if HlNodeIs(lChild,'PackageFunction') then
+      Header.PackageFunction := TIDSConnect_HLPackageFunction(ReadHlCode(IDS_HL_PACKAGEFUNCTION_CODES,lText,'die Anlagenfunktion'))
+    else if HlNodeIs(lChild,'PackageType') then
+      Header.PackageType := TIDSConnect_HLPackageType(ReadHlCode(IDS_HL_PACKAGETYPE_CODES,lText,'den Anlagentyp'))
+    else if HlNodeIs(lChild,'LoadProfile') then
+      Header.LoadProfile := TIDSConnect_HLLoadProfile(ReadHlCode(IDS_HL_LOADPROFILE_CODES,lText,'das Lastprofil'))
+    else if HlNodeIs(lChild,'ModeOfUse') then
+      Header.ModeOfUse := TIDSConnect_HLModeOfUse(ReadHlCode(IDS_HL_MODEOFUSE_CODES,lText,'die Einbausituation'))
+    else if HlNodeIs(lChild,'PackageSupplier') then
+      Header.PackageSupplier := Trim(lText)
+    else if HlNodeIs(lChild,'SolarDeviceUsage') then
+      Header.SolarDeviceUsage := TIDSConnect_HLSolarDeviceUsage(ReadHlCode(IDS_HL_SOLARDEVICEUSAGE_CODES,lText,'die Solarverwendung'))
+    else if HlNodeIs(lChild,'IncludeProductLabels') then
+      Header.IncludeProductLabels := SameText(Trim(lText),'true') or (Trim(lText) = '1')
+    else if HlNodeIs(lChild,'PDF') then
+      idsPDF(lChild,Header.PDFs.AddItem,'Kopfdaten');
+  end;
+end;
+
+function TIDSConnect_HeatinglabelHelper.idsPosition(_Node: TLandrixXmlNode): Boolean;
+var
+  i, j : Integer;
+  lChild, lRef : TLandrixXmlNode;
+  lText, lWhere : String;
+  lPos : TIDSConnect_HeatinglabelPosition;
+begin
+  Result := true;
+  lPos := Positions.AddItem;
+  lWhere := Format('Position %d',[Positions.Count]);
+  for i := 0 to _Node.ChildCount-1 do
+  begin
+    lChild := _Node.Children[i];
+    if lChild.NodeType <> xntElement then
+      continue;
+    lText := NodeText(lChild);
+    if HlNodeIs(lChild,'SupplierID') then
+      lPos.SupplierID := Trim(lText)
+    else if HlNodeIs(lChild,'Productnumber') then
+      lPos.Productnumber := Trim(lText)
+    else if HlNodeIs(lChild,'GTIN') then
+      lPos.GTIN := Trim(lText)
+    else if HlNodeIs(lChild,'ConstructionFrom') then
+      lPos.ConstructionFrom := ReadDate(lText,'Heatinglabel: Baujahr von ('+lWhere+')')
+    else if HlNodeIs(lChild,'ConstructionTo') then
+      lPos.ConstructionTo := ReadDate(lText,'Heatinglabel: Baujahr bis ('+lWhere+')')
+    else if HlNodeIs(lChild,'Shorttext') then
+      lPos.Shorttext := Trim(lText)
+    else if HlNodeIs(lChild,'QTY') then
+    begin
+      lPos.Qty := StrToIntDef(Trim(lText),0);
+      if (lPos.Qty <= 0) and (Trim(lText) <> '') then
+      begin
+        lPos.Qty := 0;
+        TIDSConnect.ReportError(Format('Heatinglabel: Menge "%s" (%s) ist keine positive ganze Zahl; nicht übernommen.',
+                                [Trim(lText),lWhere]),nil);
+      end;
+    end
+    else if HlNodeIs(lChild,'RefItems') then
+    begin
+      //Das Schema erlaubt die Folge mehrfach; uebernommen wird die erste
+      //Angabe je Feld
+      for j := 0 to lChild.ChildCount-1 do
+      begin
+        lRef := lChild.Children[j];
+        if lRef.NodeType <> xntElement then
+          continue;
+        if HlNodeIs(lRef,'Customer') and (lPos.RefItems_Customer = '') then
+          lPos.RefItems_Customer := Trim(NodeText(lRef))
+        else if HlNodeIs(lRef,'CustomerSubNo') and (lPos.RefItems_CustomerSubNo = '') then
+          lPos.RefItems_CustomerSubNo := Trim(NodeText(lRef))
+        else if HlNodeIs(lRef,'Supplier') and (lPos.RefItems_Supplier = '') then
+          lPos.RefItems_Supplier := Trim(NodeText(lRef))
+        else if HlNodeIs(lRef,'SupplierSubNo') and (lPos.RefItems_SupplierSubNo = '') then
+          lPos.RefItems_SupplierSubNo := Trim(NodeText(lRef));
+      end;
+    end
+    else if HlNodeIs(lChild,'Producttype') then
+      lPos.Producttype := TIDSConnect_HLProducttype(ReadHlCode(IDS_HL_PRODUCTTYPE_CODES,lText,'den Produkttyp ('+lWhere+')'))
+    else if HlNodeIs(lChild,'Status') then
+      lPos.Status := TIDSConnect_HLStatus(ReadHlCode(IDS_HL_STATUS_CODES,lText,'den Status ('+lWhere+')'))
+    else if HlNodeIs(lChild,'PDF') then
+      idsPDF(lChild,lPos.PDF,lWhere);
+  end;
+end;
+
+function TIDSConnect_HeatinglabelHelper.idsHeatinglabel(_Node: TLandrixXmlNode): Boolean;
+var
+  i : Integer;
+  lChild : TLandrixXmlNode;
+  lHasHeader : Boolean;
+begin
+  Result := true;
+  lHasHeader := false;
+  for i := 0 to _Node.ChildCount-1 do
+  begin
+    lChild := _Node.Children[i];
+    if lChild.NodeType <> xntElement then
+      continue;
+    if HlNodeIs(lChild,'Header') then
+    begin
+      lHasHeader := true;
+      Result := idsHeader(lChild) and Result;
+    end
+    else if HlNodeIs(lChild,'Position') then
+      Result := idsPosition(lChild) and Result;
+  end;
+  //Laut heatinglabel_empfangen gehoeren Kopfdaten und mindestens eine
+  //Position zur Rueckgabe. Ohne sie wuerde eine leere Rueckgabe die gesendete
+  //Liste ersetzen und als Erfolg gelten.
+  if not lHasHeader then
+  begin
+    TIDSConnect.ReportError('Die Heatinglabel-Rückgabe enthält keine Kopfdaten (Header); nicht übernommen.',nil);
+    Result := false;
+  end
+  else if Positions.Count = 0 then
+  begin
+    TIDSConnect.ReportError('Die Heatinglabel-Rückgabe enthält keine Positionen; nicht übernommen.',nil);
+    Result := false;
+  end;
+end;
+
+function TIDSConnect_HeatinglabelHelper.LoadFromFile(const _Filename: String): Boolean;
+var
+  lStream : TMemoryStream;
+begin
+  Result := false;
+  if not FileExists(_Filename) then
+    exit;
+  lStream := TMemoryStream.Create;
+  try
+    lStream.LoadFromFile(_Filename);
+    Result := LoadFromStream(lStream);
+  finally
+    lStream.Free;
+  end;
+end;
+
+function TIDSConnect_HeatinglabelHelper.LoadFromStream(_Stream: TStream): Boolean;
+var
+  lBuffer : TLandrixXmlDocument;
+  lBytes : TBytes;
+  lLabel : TIDSConnect_Heatinglabel;
+begin
+  Result := false;
+  //Wie beim Warenkorb: in ein eigenes Objekt lesen und nur bei Erfolg
+  //uebernehmen, damit die gesendete Liste bei einem Fehler erhalten bleibt
+  lLabel := nil;
+  lBuffer := nil;
+  try
+    try
+      _Stream.Position := 0;
+      SetLength(lBytes,_Stream.Size);
+      if Length(lBytes) > 0 then
+        _Stream.ReadBuffer(lBytes[0],Length(lBytes));
+      _Stream.Position := 0;
+      lBuffer := TLandrixXmlDocument.Create;
+      lBuffer.LoadFromString(DecodeXmlBytes(lBytes));
+      if lBuffer.Root = nil then
+        exit;
+      if not SameText(lBuffer.Root.LocalName,'Heatinglabel') then
+      begin
+        TIDSConnect.ReportError('Die Rückgabe ist kein Heatinglabel (Wurzelelement "'+
+                                lBuffer.Root.LocalName+'").',nil);
+        exit;
+      end;
+      lLabel := TIDSConnect_Heatinglabel.Create;
+      Result := lLabel.idsHeatinglabel(lBuffer.Root);
+      if Result then
+        Assign(lLabel);
+    except
+      on E:Exception do
+      begin
+        Result := false;
+        TIDSConnect.ReportError('Das Heatinglabel konnte nicht gelesen werden: '+E.Message,E);
+      end;
+    end;
+  finally
+    lLabel.Free;
+    lBuffer.Free;
+  end;
+end;
+
+function TIDSConnect_HeatinglabelHelper.SaveToString(_Val: TStringBuilder): Boolean;
+var
+  i : Integer;
+  lPos : TIDSConnect_HeatinglabelPosition;
+  lByIds : Boolean;
+  lWhere : String;
+
+  procedure OutCode(const _Indent, _Name, _Code : String);
+  begin
+    if _Code <> '' then
+      _Val.Append(_Indent+'<'+_Name+'>'+_Code+'</'+_Name+'>'+#13#10);
+  end;
+
+  procedure OutText(const _Indent, _Name, _Text : String; _MaxLength : Integer);
+  begin
+    if Trim(_Text) <> '' then
+      _Val.Append(_Indent+'<'+_Name+'>'+TIDSConnectHelper.XmlText(Trim(_Text),_MaxLength)+'</'+_Name+'>'+#13#10);
+  end;
+
+begin
+  Result := false;
+  if _Val = nil then
+    exit;
+  //Erst pruefen, dann schreiben: eine Position ohne Kennung oder mit einer
+  //Kennung, die gekuerzt werden muesste, verfaelschte die Anlage
+  for i := 0 to Positions.Count-1 do
+  begin
+    lPos := Positions[i];
+    lWhere := Format('Position %d',[i+1]);
+    if lPos.Shorttext <> '' then
+      lWhere := lWhere+' ('+lPos.Shorttext+')';
+    lByIds := (Trim(lPos.SupplierID) <> '') and (Trim(lPos.Productnumber) <> '');
+    if (not lByIds) and (Trim(lPos.GTIN) = '') then
+    begin
+      TIDSConnect.ReportError('Heatinglabel: '+lWhere+' hat weder eine GTIN noch Lieferanten-ID und '+
+                              'Produktnummer; es wurde nichts gesendet.',nil);
+      exit;
+    end;
+    if lByIds and ((Length(Trim(lPos.SupplierID)) > 80) or (Length(Trim(lPos.Productnumber)) > 80)) then
+    begin
+      TIDSConnect.ReportError('Heatinglabel: Lieferanten-ID oder Produktnummer von '+lWhere+
+                              ' ist länger als 80 Zeichen; es wurde nichts gesendet.',nil);
+      exit;
+    end;
+    if (not lByIds) and (Length(Trim(lPos.GTIN)) > 13) then
+    begin
+      TIDSConnect.ReportError('Heatinglabel: Die GTIN "'+Trim(lPos.GTIN)+'" von '+lWhere+
+                              ' ist länger als 13 Zeichen; es wurde nichts gesendet.',nil);
+      exit;
+    end;
+  end;
+
+  _Val.Append('<?xml version="1.0" encoding="UTF-8"?>'+#13#10);
+  _Val.Append('<Heatinglabel xmlns="'+TIDSConnect_XMLNameSpaceHeatinglabel+'" ');
+  _Val.Append('xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" ');
+  _Val.Append('xsi:schemaLocation="'+TIDSConnect_XMLNameSpaceHeatinglabel+' '+
+              TIDSConnect_XMLSchemaSendHeatinglabel+'">'+#13#10);
+  //Reihenfolge laut heatinglabel_senden_2-5.xsd
+  _Val.Append(' <Header>'+#13#10);
+  OutCode('  ','PackageFunction',IDS_HL_PACKAGEFUNCTION_CODES[Header.PackageFunction]);
+  OutCode('  ','PackageType',IDS_HL_PACKAGETYPE_CODES[Header.PackageType]);
+  OutCode('  ','LoadProfile',IDS_HL_LOADPROFILE_CODES[Header.LoadProfile]);
+  OutCode('  ','ModeOfUse',IDS_HL_MODEOFUSE_CODES[Header.ModeOfUse]);
+  OutText('  ','PackageSupplier',Header.PackageSupplier,35);
+  OutCode('  ','SolarDeviceUsage',IDS_HL_SOLARDEVICEUSAGE_CODES[Header.SolarDeviceUsage]);
+  if Header.IncludeProductLabels then
+    OutCode('  ','IncludeProductLabels','true');
+  _Val.Append(' </Header>'+#13#10);
+
+  for i := 0 to Positions.Count-1 do
+  begin
+    lPos := Positions[i];
+    _Val.Append(' <Position>'+#13#10);
+    //Das Schema laesst nur eine der beiden Kennungen zu
+    if (Trim(lPos.SupplierID) <> '') and (Trim(lPos.Productnumber) <> '') then
+    begin
+      OutText('  ','SupplierID',lPos.SupplierID,80);
+      OutText('  ','Productnumber',lPos.Productnumber,80);
+    end else
+      OutText('  ','GTIN',lPos.GTIN,13);
+    if lPos.ConstructionFrom <> 0 then
+      OutCode('  ','ConstructionFrom',TIDSConnectHelper.DateToDateStr(lPos.ConstructionFrom));
+    if lPos.ConstructionTo <> 0 then
+      OutCode('  ','ConstructionTo',TIDSConnectHelper.DateToDateStr(lPos.ConstructionTo));
+    OutText('  ','Shorttext',lPos.Shorttext,81);
+    if lPos.Qty > 0 then
+      OutCode('  ','QTY',IntToStr(lPos.Qty));
+    //Eine Unterpositionsnummer steht im Schema nur hinter ihrer Positionsnummer
+    if (Trim(lPos.RefItems_Customer) <> '') or (Trim(lPos.RefItems_Supplier) <> '') then
+    begin
+      _Val.Append('  <RefItems>'+#13#10);
+      if Trim(lPos.RefItems_Customer) <> '' then
+      begin
+        OutText('   ','Customer',lPos.RefItems_Customer,35);
+        OutText('   ','CustomerSubNo',lPos.RefItems_CustomerSubNo,35);
+      end;
+      if Trim(lPos.RefItems_Supplier) <> '' then
+      begin
+        OutText('   ','Supplier',lPos.RefItems_Supplier,35);
+        OutText('   ','SupplierSubNo',lPos.RefItems_SupplierSubNo,35);
+      end;
+      _Val.Append('  </RefItems>'+#13#10);
+    end;
+    _Val.Append(' </Position>'+#13#10);
+  end;
+  _Val.Append('</Heatinglabel>'+#13#10);
+  Result := true;
+end;
+
+function TIDSConnect_HeatinglabelHelper.AddFromWarenkorb(_Warenkorb: TIDSConnect_Warenkorb): Integer;
+var
+  i : Integer;
+  lItem : TIDSConnect_OrderItem;
+  lPos : TIDSConnect_HeatinglabelPosition;
+  lMissing : String;
+  lMissingCount : Integer;
+begin
+  Result := 0;
+  if _Warenkorb = nil then
+    exit;
+  lMissing := '';
+  lMissingCount := 0;
+  for i := 0 to _Warenkorb.Order.OrderItems.Count-1 do
+  begin
+    lItem := _Warenkorb.Order.OrderItems[i];
+    //Die Artikelnummer eines Grosshaendlers ist keine Produktnummer der
+    //Plattform - uebernommen werden nur Positionen mit EAN (= GTIN)
+    if Trim(lItem.EAN) = '' then
+    begin
+      Inc(lMissingCount);
+      if lMissingCount <= 10 then
+      begin
+        if lMissing <> '' then
+          lMissing := lMissing+', ';
+        lMissing := lMissing+IfThen(lItem.ArtNo <> '',lItem.ArtNo,lItem.Kurztext);
+      end;
+      continue;
+    end;
+    lPos := Positions.AddItem;
+    lPos.GTIN := Trim(lItem.EAN);
+    lPos.Shorttext := Copy(Trim(lItem.Kurztext),1,81);
+    if lItem.Qty >= 1 then
+      lPos.Qty := Round(lItem.Qty);
+    //Ueber die Positionsnummer ordnet die Handwerkssoftware die Rueckgabe zu;
+    //ohne eigene wird die laufende Nummer im Warenkorb verwendet
+    lPos.RefItems_Customer := lItem.RefItems_Customer;
+    lPos.RefItems_CustomerSubNo := lItem.RefItems_CustomerSubNo;
+    if lPos.RefItems_Customer = '' then
+      lPos.RefItems_Customer := IntToStr(i+1);
+    Inc(Result);
+  end;
+  if lMissingCount > 0 then
+  begin
+    if lMissingCount > 10 then
+      lMissing := lMissing+', ...';
+    TIDSConnect.ReportError(Format('Heatinglabel: %d Position(en) ohne EAN/GTIN nicht übernommen: %s',
+                            [lMissingCount,lMissing]),nil);
+  end;
+end;
+
 { TIDSConnect }
 
 class procedure TIDSConnect.ReportError(const _Message: String; _E: Exception);
@@ -2968,14 +3453,43 @@ begin
   end;
 end;
 
-class function TIDSConnect.TryFetchResult(const _Url: String;
-  _Warenkorb: TIDSConnect_Warenkorb): Boolean;
+class function TIDSConnect.FetchWith(const _Url: String;
+  const _Loader: TResultLoader; const _What: String; out _Error: String): Boolean;
 var
-  lError : String;
+  lRaw : TBytes;
+  lId : String;
+  lStream : TBytesStream;
 begin
-  Result := TryFetchResult(_Url,_Warenkorb,lError);
-  if (not Result) and (lError <> '') then
-    ReportError(lError,nil);
+  Result := false;
+  _Error := '';
+  if not Assigned(_Loader) then
+    exit;
+  //Erst herunterladen (404 und leer sind kein Fehler), dann einlesen
+  if not FetchResult(_Url,nil,_Error,lRaw,lId) then
+    exit;
+  lStream := TBytesStream.Create(lRaw);
+  try
+    Result := _Loader(lStream);
+  finally
+    lStream.Free;
+  end;
+  if not Result then
+    _Error := 'Die Rückgabe konnte nicht als '+_What+' eingelesen werden.';
+end;
+
+class function TIDSConnect.TryFetchHeatinglabel(const _Url: String;
+  _Heatinglabel: TIDSConnect_Heatinglabel; out _Error: String): Boolean;
+begin
+  Result := false;
+  _Error := '';
+  if _Heatinglabel = nil then
+    exit;
+  Result := FetchWith(_Url,
+              function(_Stream : TStream) : Boolean
+              begin
+                Result := _Heatinglabel.LoadFromStream(_Stream);
+              end,
+              'Heatinglabel',_Error);
 end;
 
 class procedure TIDSConnect.MergeOrderItems(_From, _To: TIDSConnect_Warenkorb;
@@ -3131,39 +3645,21 @@ class function TIDSConnect.WaitForResult(const _Url: String;
   _Warenkorb: TIDSConnect_Warenkorb; _TimeoutSec: Integer;
   _MultipleResult: Boolean): Boolean;
 var
-  lReported : Boolean;
   lState : TCollectState;
 begin
   //Frueher stand hier ein TaskMessageDlg mit genau einem Abrufversuch
   //danach: war der Warenkorb noch nicht angekommen, scheiterte der Vorgang
   //ohne Wiederholung und ohne Diagnose.
-  lReported := false;
 
   if not _MultipleResult then
   begin
-    Result := TIDSConnectDlgWait.Execute(
-                'Warte auf Abschluss',
-                'Bitte schliessen Sie den Vorgang im Browser ab.'+sLineBreak+
-                'Der Warenkorb wird danach automatisch uebernommen.',
-                _TimeoutSec,
-                function : TIDSConnectPollResult
-                var
-                  lError : String;
+    Result := WaitForSingle(_Url,
+                function(_Stream : TStream) : Boolean
                 begin
-                  if TryFetchResult(_Url,_Warenkorb,lError) then
-                    Result := idsPollFinished
-                  else
-                  begin
-                    Result := idsPollNothing;
-                    //Eine dauerhafte Stoerung nur einmal melden, nicht bei
-                    //jedem Abrufversuch
-                    if (lError <> '') and (not lReported) then
-                    begin
-                      lReported := true;
-                      ReportError('Der Abruf von '+_Url+' ist fehlgeschlagen: '+lError,nil);
-                    end;
-                  end;
-                end);
+                  Result := _Warenkorb.LoadFromStream(_Stream);
+                end,
+                'Warenkorb','Der Warenkorb wird danach automatisch uebernommen.',
+                _TimeoutSec);
     exit;
   end;
 
@@ -3197,6 +3693,38 @@ begin
   //ist, wuerde sonst ungelesen auf dem Server verfallen
   CollectAll(_Url,_Warenkorb,lState);
   Result := lState.Received > 0;
+end;
+
+class function TIDSConnect.WaitForSingle(const _Url: String;
+  const _Loader: TResultLoader; const _What, _WaitHint: String;
+  _TimeoutSec: Integer): Boolean;
+var
+  lReported : Boolean;
+begin
+  lReported := false;
+  Result := TIDSConnectDlgWait.Execute(
+                'Warte auf Abschluss',
+                'Bitte schliessen Sie den Vorgang im Browser ab.'+sLineBreak+
+                _WaitHint,
+                _TimeoutSec,
+                function : TIDSConnectPollResult
+                var
+                  lError : String;
+                begin
+                  if FetchWith(_Url,_Loader,_What,lError) then
+                    Result := idsPollFinished
+                  else
+                  begin
+                    Result := idsPollNothing;
+                    //Eine dauerhafte Stoerung nur einmal melden, nicht bei
+                    //jedem Abrufversuch
+                    if (lError <> '') and (not lReported) then
+                    begin
+                      lReported := true;
+                      ReportError('Der Abruf von '+_Url+' ist fehlgeschlagen: '+lError,nil);
+                    end;
+                  end;
+                end);
 end;
 
 class function TIDSConnect.BuildFormHeader(const _Title: String): String;
@@ -3411,10 +3939,24 @@ end;
 class function TIDSConnect.ShowFormAndFetch(_Form: TStrings; const _TmpFilename,
   _ResultUrl: String; _Warenkorb: TIDSConnect_Warenkorb;
   _TimeoutSec: Integer; _MultipleResult: Boolean): Boolean;
+begin
+  Result := ShowFormAndFetchWith(_Form,_TmpFilename,_ResultUrl,
+              function(_Stream : TStream) : Boolean
+              begin
+                Result := (_Warenkorb <> nil) and _Warenkorb.LoadFromStream(_Stream);
+              end,
+              'Warenkorb','Der Warenkorb wird danach automatisch uebernommen.',
+              _Warenkorb,_TimeoutSec,_MultipleResult);
+end;
+
+class function TIDSConnect.ShowFormAndFetchWith(_Form: TStrings; const _TmpFilename,
+  _ResultUrl: String; const _Loader: TResultLoader; const _What, _WaitHint: String;
+  _Warenkorb: TIDSConnect_Warenkorb; _TimeoutSec: Integer;
+  _MultipleResult: Boolean): Boolean;
 var
   lState : TCollectState;
   lModal : TModalResult;
-  lTmp : String;
+  lTmp, lError : String;
 begin
   Result := false;
 
@@ -3463,7 +4005,9 @@ begin
     //Warenkorb bereits uebertragen worden sein
     if not _MultipleResult then
     begin
-      Result := TryFetchResult(_ResultUrl,_Warenkorb);
+      Result := FetchWith(_ResultUrl,_Loader,_What,lError);
+      if (not Result) and (lError <> '') then
+        ReportError(lError,nil);
       exit;
     end;
     //Was seit dem letzten Abruf noch eingetroffen ist
@@ -3492,7 +4036,10 @@ begin
     exit;
   end;
   try
-    Result := WaitForResult(_ResultUrl,_Warenkorb,_TimeoutSec,_MultipleResult);
+    if _MultipleResult then
+      Result := WaitForResult(_ResultUrl,_Warenkorb,_TimeoutSec,true)
+    else
+      Result := WaitForSingle(_ResultUrl,_Loader,_What,_WaitHint,_TimeoutSec);
   finally
     //Bis hierher hat der Browser das Formular laengst abgeschickt
     DeleteTmpFileLater(lTmp,0);
@@ -3730,6 +4277,78 @@ begin
       Result := ShowFormAndFetch(hstrl,_TmpFilename,'',nil,0)
     else
       Result := ShowFormAndFetch(hstrl,_TmpFilename,HookUrlWithSid(sid),_Warenkorb,IDSCONNECT_HOOKURL_TIMEOUT);
+  finally
+    hstrl.Free;
+    hstr.Free;
+  end;
+end;
+
+class function TIDSConnect.IDSConnectHLS(const _ServiceURL, _Cst, _UN, _Pwd,
+  _TmpFilename: String; _Heatinglabel: TIDSConnect_Heatinglabel;
+  _Version: TIDSConnect_Version): Boolean;
+var
+  hstrl : TStringList;
+  sid : String;
+  hstr : TStringBuilder;
+begin
+  Result := false;
+  if _ServiceURL.IsEmpty then
+  begin
+    ReportError('HLS: Die Adresse der Plattform fehlt.',nil);
+    exit;
+  end;
+  //Ohne Hook-URL ist laut Spezifikation keine Rueckuebertragung moeglich
+  if TIDSConnect.IDSCONNECT_HOOKURL = '' then
+  begin
+    ReportError('HLS: Die Hook-URL fehlt.',nil);
+    exit;
+  end;
+  if _Heatinglabel = nil then
+  begin
+    ReportError('HLS: Es ist keine Artikelliste übergeben.',nil);
+    exit;
+  end;
+  CheckHttps('HLS','Die Adresse der Plattform',_ServiceURL);
+  if not CheckHttps('HLS','Die Hook-URL',IDSCONNECT_HOOKURL,IDSCONNECT_REQUIRE_HTTPS_HOOK) then
+    exit;
+
+  sid := TIDSConnect.GetUuid;
+  hstr := TStringBuilder.Create;
+  hstrl := TStringList.Create;
+  try
+    //Meldet selbst, welche Position nicht gesendet werden kann
+    if not _Heatinglabel.SaveToString(hstr) then
+      exit;
+    hstrl.Add('<!doctype html>');
+    hstrl.Add(BuildFormHeader('HLS'));
+    hstrl.Add('<body onload="document.forms[''hls''].submit();">');
+    hstrl.Add('<form id="hls" name="hls" action="'+TIDSConnectHelper.HtmlEscape(_ServiceURL)+'" method="post" enctype="multipart/form-data" accept-charset="utf-8">');
+    hstrl.Add(HiddenField('kndnr',_Cst,50));
+    hstrl.Add(HiddenField('name_kunde',_UN,50));
+    hstrl.Add(HiddenField('pw_kunde',_Pwd,50));
+    hstrl.Add(HiddenField('version',TIDSConnectHelper.VersionToStr(_Version),5));
+    //Wie beim Warenkorb: das XML im textarea ein zweites Mal HTML-maskieren
+    hstrl.Add('<textarea cols="1" rows="1" name="heatinglabel">'+#13#10+
+              TIDSConnectHelper.HtmlEscape(hstr.ToString)+#13#10+'</textarea>');
+    hstrl.Add(HiddenField('action','HLS',3));
+    hstrl.Add(HiddenField('hookurl',HookUrlWithSid(sid),256));
+    hstrl.Add('</form></body></html>');
+    if Assigned(IDSCONNECT_ONREQUEST) then
+      IDSCONNECT_ONREQUEST(_ServiceURL,
+        'action=HLS'+sLineBreak+
+        'version='+TIDSConnectHelper.VersionToStr(_Version)+sLineBreak+
+        'kndnr='+_Cst+sLineBreak+
+        'name_kunde='+_UN+sLineBreak+
+        'pw_kunde='+IfThen(_Pwd = '','(leer)','(maskiert)')+sLineBreak+
+        'hookurl='+HookUrlWithSid(sid)+sLineBreak+
+        'heatinglabel='+hstr.ToString);
+    Result := ShowFormAndFetchWith(hstrl,_TmpFilename,HookUrlWithSid(sid),
+                function(_Stream : TStream) : Boolean
+                begin
+                  Result := _Heatinglabel.LoadFromStream(_Stream);
+                end,
+                'Heatinglabel','Das Heatinglabel wird danach automatisch uebernommen.',
+                nil,IDSCONNECT_HOOKURL_TIMEOUT,false);
   finally
     hstrl.Free;
     hstr.Free;

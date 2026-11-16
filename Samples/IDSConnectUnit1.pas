@@ -28,6 +28,7 @@ type
     Button6: TButton;
     Panel1: TPanel;
     FSaveResponse: TButton;
+    FHeatinglabel: TButton;
     procedure FormCreate(Sender: TObject);
     procedure FormDestroy(Sender: TObject);
     procedure Button1Click(Sender: TObject);
@@ -38,6 +39,7 @@ type
     procedure Button4Click(Sender: TObject);
     procedure Button6Click(Sender: TObject);
     procedure SaveResponseClick(Sender : TObject);
+    procedure HeatinglabelClick(Sender: TObject);
   private
     //Aufbau der Ini-Datei mit Lieferanten
     //
@@ -69,6 +71,8 @@ type
     //                     Handwerkssoftware an den Shop - und muss deshalb je
     //                     Anbieter einmal ausprobiert und hier hinterlegt
     //                     werden.
+    //HeatinglabelUrl=...  optional; Adresse einer Heatinglabel-Plattform
+    //                     (Aktion HLS), falls sie nicht die IDS-Adresse ist
 
     cfg : TMemIniFile;
     //Per SV ermittelte Versionen je Anbieter (Schluessel: Abschnittsname in
@@ -103,6 +107,9 @@ type
     //wird deshalb je Anbieter in der config.ini hinterlegt
     function UseMultipleResult : Boolean;
     procedure ShowWarenkorb(_Warenkorb : TIDSConnect_Warenkorb);
+    //Zeigt die Rueckgabe einer Heatinglabel-Plattform an und speichert die
+    //PDFs unter Dokumente\IDSConnect-Heatinglabel
+    procedure ShowHeatinglabel(_Label : TIDSConnect_Heatinglabel);
     procedure HandleIDSError(const _Message : String; _E : Exception);
   end;
 
@@ -661,6 +668,127 @@ begin
     ShowWarenkorb(lWarenkorb);
   finally
     lWarenkorb.Free;
+  end;
+end;
+
+procedure TMainForm.HeatinglabelClick(Sender: TObject);
+var
+  lLabel : TIDSConnect_Heatinglabel;
+  lVersion : TIDSConnect_Version;
+  lUrl : String;
+begin
+  Memo1.Clear;
+  if SelectedSection = '' then
+    exit;
+  if not ReadShopVersion(lVersion) then
+    exit;
+  if not PrepareHookUrl then
+    exit;
+  //Die Heatinglabel-Plattform kann eine eigene Adresse haben; ohne Eintrag
+  //wird die IDS-Adresse des Anbieters verwendet
+  lUrl := cfg.ReadString(SelectedSection,'HeatinglabelUrl','');
+  if lUrl = '' then
+    lUrl := cfg.ReadString(SelectedSection,'IDSConnectUrl','');
+
+  lLabel := TIDSConnect_Heatinglabel.Create;
+  try
+    //Beispielanlage: Gas-Brennwertkessel, Regler und zwei Solarkollektoren.
+    //Die GTINs sind Platzhalter - eine echte Plattform meldet sie als
+    //NotFound. In der Handwerkssoftware kommen sie aus den Artikeldaten
+    //(EAN), z. B. mit lLabel.AddFromWarenkorb(Warenkorb).
+    lLabel.Header.PackageFunction := idsHlPf_Combination;
+    lLabel.Header.PackageType := idsHlPt_CombinationBoiler;
+    lLabel.Header.LoadProfile := idsHlLp_XL;
+    lLabel.Header.PackageSupplier := 'Musterbetrieb Heizung';
+    lLabel.Header.SolarDeviceUsage := idsHlSu_Both;
+    lLabel.Header.IncludeProductLabels := true;
+    with lLabel.Positions.AddItem do
+    begin
+      GTIN := '4000000000017';
+      Shorttext := 'Gas-Brennwertkessel 20 kW';
+      Qty := 1;
+      RefItems_Customer := '1';
+    end;
+    with lLabel.Positions.AddItem do
+    begin
+      GTIN := '4000000000024';
+      Shorttext := 'Witterungsgeführter Regler';
+      Qty := 1;
+      RefItems_Customer := '2';
+    end;
+    with lLabel.Positions.AddItem do
+    begin
+      GTIN := '4000000000031';
+      Shorttext := 'Flachkollektor 2,3 m²';
+      Qty := 2;
+      RefItems_Customer := '3';
+    end;
+
+    if not TIDSConnect.IDSConnectHLS(
+              lUrl,
+              cfg.ReadString(SelectedSection,'Customernumber',''),
+              cfg.ReadString(SelectedSection,'Username',''),
+              cfg.ReadString(SelectedSection,'Password',''),
+              TempHtmlFilename,
+              lLabel,lVersion) then
+    begin
+      Memo1.Lines.Add('Es wurde kein Heatinglabel übernommen.');
+      exit;
+    end;
+    ShowHeatinglabel(lLabel);
+  finally
+    lLabel.Free;
+  end;
+end;
+
+procedure TMainForm.ShowHeatinglabel(_Label: TIDSConnect_Heatinglabel);
+var
+  i : Integer;
+  lDir : String;
+  lPos : TIDSConnect_HeatinglabelPosition;
+  lCount : Integer;
+
+  //Speichert ein PDF unter seinem Namen; der Name kommt von der Plattform und
+  //wird deshalb auf einen reinen Dateinamen ohne Pfad reduziert
+  //Die laufende Nummer vorn: das Schema erlaubt gleiche Namen, die sich
+  //sonst gegenseitig ueberschrieben
+  procedure SavePdf(_Pdf : TIDSConnect_HeatinglabelPDF; const _Fallback : String);
+  var
+    lName : String;
+    c : Char;
+  begin
+    if _Pdf.IsEmpty then
+      exit;
+    lName := ExtractFileName(StringReplace(_Pdf.PDFName,'/','\',[rfReplaceAll]));
+    for c in TPath.GetInvalidFileNameChars do
+      lName := StringReplace(lName,c,'_',[rfReplaceAll]);
+    if (lName = '') or (lName = '.') or (lName = '..') then
+      lName := _Fallback;
+    if not EndsText('.pdf',lName) then
+      lName := lName+'.pdf';
+    Inc(lCount);
+    lName := TPath.Combine(lDir,Format('%.2d-%s',[lCount,lName]));
+    _Pdf.SaveToFile(lName);
+    Memo1.Lines.Add('  PDF '+IDS_HL_PDFTYPE_CODES[_Pdf.PDFType]+': '+lName);
+  end;
+
+begin
+  lDir := TPath.Combine(TPath.GetDocumentsPath,'IDSConnect-Heatinglabel\'+FormatDateTime('yyyymmdd-hhnnss',Now));
+  ForceDirectories(lDir);
+  lCount := 0;
+  Memo1.Lines.Add('Heatinglabel empfangen:');
+  Memo1.Lines.Add('  Anlage: '+IDS_HL_PACKAGEFUNCTION_CODES[_Label.Header.PackageFunction]+' / '+
+                  IDS_HL_PACKAGETYPE_CODES[_Label.Header.PackageType]+', zusammengestellt von '+
+                  _Label.Header.PackageSupplier);
+  for i := 0 to _Label.Header.PDFs.Count-1 do
+    SavePdf(_Label.Header.PDFs[i],Format('anlage-%d',[i+1]));
+  for i := 0 to _Label.Positions.Count-1 do
+  begin
+    lPos := _Label.Positions[i];
+    Memo1.Lines.Add(Format('  Pos. %s: %s %s %s - %s, %s',
+      [lPos.RefItems_Customer,lPos.SupplierID,lPos.Productnumber,lPos.GTIN,
+       IDS_HL_STATUS_CODES[lPos.Status],IDS_HL_PRODUCTTYPE_CODES[lPos.Producttype]]));
+    SavePdf(lPos.PDF,Format('position-%d',[i+1]));
   end;
 end;
 

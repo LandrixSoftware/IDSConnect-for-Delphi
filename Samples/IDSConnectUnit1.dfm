@@ -149,4 +149,13 @@ object MainForm: TMainForm
     TabOrder = 12
     OnClick = SaveResponseClick
   end
+  object FHeatinglabel: TButton
+    Left = 310
+    Top = 862
+    Width = 145
+    Height = 25
+    Caption = 'Heatinglabel (HLS)'
+    TabOrder = 13
+    OnClick = HeatinglabelClick
+  end
 end

@@ -37,7 +37,9 @@
 // Die Callback-URL muss per https erreichbar sein.
 //
 // Ablauf: Der Shop sendet den Warenkorb per POST (Feld "warenkorb") an
-// ?sid=<uuid>. Die Handwerkssoftware ruft dieselbe Adresse per GET ab.
+// ?sid=<uuid>; die Heatinglabel-Plattform (Aktion HLS) die Artikelliste im
+// Feld "heatinglabel" (die Spezifikation nennt das Feld der Rueckgabe nicht,
+// es heisst wie beim Senden). Die Handwerkssoftware ruft dieselbe Adresse per GET ab.
 // Jede Uebertragung wird als eigene Datei in eine Warteschlange je sid
 // gelegt; jeder Abruf liefert die aelteste und loescht sie. Damit gehen bei
 // der Mehrfachrueckgabe (multipleResult, IDS 2.5.1) keine Rueckgaben
@@ -46,6 +48,7 @@
 // naechsten Abruf ueberschrieb die erste.
 
 const IDSCONNECT_MAX_SIZE  = 4 * 1024 * 1024;  // max. Groesse eines Warenkorbs
+const IDSCONNECT_MAX_SIZE_HEATINGLABEL = 32 * 1024 * 1024; // Heatinglabel: enthaelt die Label als PDF (base64)
 const IDSCONNECT_MAX_TOTAL = 64 * 1024 * 1024; // max. Gesamtgroesse der Ablage (Umgebungsvariable IDSCONNECT_MAX_TOTAL)
 const IDSCONNECT_MIN_FILE  = 4096;             // so viel zaehlt jede Datei mindestens (auch eine leere)
 const IDSCONNECT_TTL       = 3600;             // Sekunden, danach gilt die Ablage als verfallen
@@ -209,10 +212,28 @@ idsconnect_cleanup();
 
 // Nur POST legt ab. Frueher genuegte wegen $_REQUEST ein GET-Link mit
 // ?warenkorb=..., um Inhalte unterzuschieben.
-if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['warenkorb']))
+$field = null;
+if ($_SERVER['REQUEST_METHOD'] === 'POST')
 {
-  $warenkorb = $_POST['warenkorb'];
-  if (!is_string($warenkorb) || strlen($warenkorb) > IDSCONNECT_MAX_SIZE)
+  if (isset($_POST['warenkorb']))
+    $field = 'warenkorb';
+  elseif (isset($_POST['heatinglabel']))
+    $field = 'heatinglabel';
+  else
+  {
+    // Ein POST ohne bekanntes Feld wurde frueher wie ein Abruf behandelt und
+    // lieferte eine wartende Rueckgabe an den Absender aus. Leeres $_POST
+    // trotz Inhalt: PHP hat ihn wegen post_max_size verworfen.
+    http_response_code(empty($_POST) && (int)($_SERVER['CONTENT_LENGTH'] ?? 0) > 0 ? 413 : 400);
+    exit;
+  }
+}
+
+if ($field !== null)
+{
+  $payload = $_POST[$field];
+  $max = $field === 'heatinglabel' ? IDSCONNECT_MAX_SIZE_HEATINGLABEL : IDSCONNECT_MAX_SIZE;
+  if (!is_string($payload) || strlen($payload) > $max)
   {
     http_response_code(413);
     exit;
@@ -231,7 +252,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['warenkorb']))
 
   // Gesamtgroesse begrenzen: sonst liesse sich die Platte mit beliebig vielen
   // 4-MB-Ablagen fuellen (abgelaufene sind oben schon entfernt)
-  if (idsconnect_used() + max(strlen($warenkorb), IDSCONNECT_MIN_FILE) > idsconnect_max_total())
+  if (idsconnect_used() + max(strlen($payload), IDSCONNECT_MIN_FILE) > idsconnect_max_total())
   {
     flock($lock, LOCK_UN);
     http_response_code(507);
@@ -244,7 +265,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['warenkorb']))
   $name = $dir . '/' . $sid . '.' . sprintf('%017.6f', microtime(true))
         . '-' . bin2hex(random_bytes(4)) . '.dat';
   $tmp = $name . '.tmp';
-  $ok = @file_put_contents($tmp, $warenkorb) !== false;
+  $ok = @file_put_contents($tmp, $payload) !== false;
   if ($ok)
   {
     @chmod($tmp, 0600);

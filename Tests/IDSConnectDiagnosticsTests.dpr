@@ -341,6 +341,354 @@ begin
     Writeln(Format('PASS: %d own carts valid against the local itek XSDs',[Checked]));
 end;
 
+//Heatinglabel (HLS): XML to send, XSD check where the schemas exist locally,
+//reading a platform return with PDFs, error cases, fetch via the mock hook
+//and the transfer of cart positions
+const
+  HlReturn =
+    '<?xml version="1.0" encoding="UTF-8"?>'+
+    '<Heatinglabel xmlns="http://www.itek.de/Shop-Anbindung/Heatinglabel/">'+
+    '<Header><PackageFunction>heating</PackageFunction><PackageType>heating-heatpump</PackageType>'+
+    '<LoadProfile>XL</LoadProfile><ModeOfUse>Indoor</ModeOfUse><PackageSupplier>Muster GmbH</PackageSupplier>'+
+    '<SolarDeviceUsage>both</SolarDeviceUsage>'+
+    '<PDF><PDFName>label.pdf</PDFName><PDFData>JVBERi0x'#10'LjQgaGw=</PDFData><PDFType>PackageLabelAndFiche</PDFType></PDF>'+
+    '<PDF><PDFName>liste.pdf</PDFName><PDFData>JVBERi0xLjQgaGw=</PDFData><PDFType>Articlelist</PDFType></PDF>'+
+    '</Header>'+
+    '<Position><SupplierID>S1</SupplierID><Productnumber>P1</Productnumber><GTIN>4012345678901</GTIN>'+
+    '<ConstructionFrom>2020-01-01</ConstructionFrom><Shorttext>Waermepumpe</Shorttext><QTY>1</QTY>'+
+    '<RefItems><Customer>10</Customer><CustomerSubNo>a</CustomerSubNo><Supplier>1</Supplier></RefItems>'+
+    '<Producttype>RHG-WP</Producttype><Status>Used</Status>'+
+    '<PDF><PDFName>wp.pdf</PDFName><PDFData>JVBERi0xLjQgcG9z</PDFData><PDFType>PositionProductLabel</PDFType></PDF>'+
+    '</Position>'+
+    '<Position><SupplierID>S2</SupplierID><Productnumber>P2</Productnumber>'+
+    '<Producttype>TR</Producttype><Status>New</Status></Position>'+
+    '<Position><SupplierID>S3</SupplierID><Productnumber>P3</Productnumber><Status>NotFound</Status></Position>'+
+    '</Heatinglabel>';
+
+function SaveLabel(Hl: TIDSConnect_Heatinglabel; out Xml: String): Boolean;
+var
+  Sb: TStringBuilder;
+begin
+  Sb := TStringBuilder.Create;
+  try
+    Result := Hl.SaveToString(Sb);
+    Xml := Sb.ToString;
+  finally
+    Sb.Free;
+  end;
+end;
+
+procedure FillLabel(Hl: TIDSConnect_Heatinglabel);
+begin
+  Hl.Clear;
+  Hl.Header.PackageFunction := idsHlPf_Combination;
+  Hl.Header.PackageType := idsHlPt_CombinationHeatpump;
+  Hl.Header.LoadProfile := idsHlLp_XXL;
+  Hl.Header.ModeOfUse := idsHlMu_Outdoor;
+  Hl.Header.PackageSupplier := 'Heizungsbau & Sohn <Nord>';
+  Hl.Header.SolarDeviceUsage := idsHlSu_Water;
+  Hl.Header.IncludeProductLabels := true;
+  with Hl.Positions.AddItem do
+  begin
+    GTIN := '4012345678901';
+    ConstructionFrom := EncodeDate(2019,1,1);
+    ConstructionTo := EncodeDate(2025,12,31);
+    Shorttext := 'Waermepumpe "Luft/Wasser"';
+    Qty := 1;
+    RefItems_Customer := '1';
+    RefItems_CustomerSubNo := '1.1';
+    RefItems_Supplier := '7';
+  end;
+  with Hl.Positions.AddItem do
+  begin
+    SupplierID := 'HERST';
+    Productnumber := 'KOLL-2';
+    GTIN := '4000000000002';
+    Qty := 4;
+    //Sub number without its position number must not be written
+    RefItems_SupplierSubNo := 'x';
+  end;
+end;
+
+procedure CheckHeatinglabelXsd(const DocRoot: String; Hl: TIDSConnect_Heatinglabel);
+var
+  XsdFile, Xml, Errors: String;
+  Schema: TLandrixXmlXsdSchemaSet;
+  Validator: TLandrixXmlXsdValidator;
+  Doc: TLandrixXmlDocument;
+  k, Variant: Integer;
+begin
+  XsdFile := TPath.Combine(TPath.Combine(DocRoot,'IDSConnect 2.5.1'),'heatinglabel_senden_2-5.xsd');
+  if (DocRoot = '') or not FileExists(XsdFile) then
+  begin
+    Writeln('SKIP: XSD validation heatinglabel (schema not present locally)');
+    exit;
+  end;
+  Schema := LandrixXmlXsdLoadSchema(XsdFile);
+  Validator := nil;
+  Doc := nil;
+  try
+    Doc := TLandrixXmlDocument.Create;
+    Validator := TLandrixXmlXsdValidator.Create(Schema);
+    for Variant := 0 to 2 do
+    begin
+      FillLabel(Hl);
+      if Variant = 1 then
+        Hl.Clear  //header without any value, no position
+      else if Variant = 2 then
+      begin
+        //Only identifications
+        Hl.Header.Clear;
+        Hl.Positions[0].Shorttext := '';
+        Hl.Positions[0].ConstructionFrom := 0;
+        Hl.Positions[0].ConstructionTo := 0;
+        Hl.Positions[0].Qty := 0;
+        Hl.Positions[0].RefItems_Customer := '';
+        Hl.Positions[0].RefItems_Supplier := '';
+      end;
+      Check(SaveLabel(Hl,Xml),'heatinglabel not written');
+      Doc.LoadFromString(Xml);
+      if not Validator.ValidateDocument(Doc) then
+      begin
+        Errors := '';
+        for k := 0 to Validator.ErrorCount-1 do
+          Errors := Errors+sLineBreak+'  '+IntToStr(Validator.Errors[k].Line)+': '+
+                    Validator.Errors[k].Code+' '+Validator.Errors[k].Message;
+        raise Exception.Create(Format('heatinglabel (variant %d) violates heatinglabel_senden_2-5.xsd:%s',
+                                      [Variant,Errors]));
+      end;
+    end;
+    //Counter-check: both identifications in one position violate the schema
+    FillLabel(Hl);
+    Check(SaveLabel(Hl,Xml),'heatinglabel not written');
+    Doc.LoadFromString(StringReplace(Xml,'<Productnumber>KOLL-2</Productnumber>',
+      '<Productnumber>KOLL-2</Productnumber><GTIN>4000000000002</GTIN>',[]));
+    Check(not Validator.ValidateDocument(Doc),'heatinglabel validator accepted SupplierID and GTIN');
+  finally
+    Doc.Free;
+    Validator.Free;
+    Schema.Free;
+  end;
+
+  //The return used below must itself be valid, otherwise the read test
+  //proves little
+  XsdFile := TPath.Combine(TPath.Combine(DocRoot,'IDSConnect 2.5.1'),'heatinglabel_empfangen_2-5.xsd');
+  if not FileExists(XsdFile) then
+    exit;
+  Schema := LandrixXmlXsdLoadSchema(XsdFile);
+  Validator := nil;
+  Doc := nil;
+  try
+    Doc := TLandrixXmlDocument.Create;
+    Validator := TLandrixXmlXsdValidator.Create(Schema);
+    Doc.LoadFromString(HlReturn);
+    if not Validator.ValidateDocument(Doc) then
+    begin
+      Errors := '';
+      for k := 0 to Validator.ErrorCount-1 do
+        Errors := Errors+sLineBreak+'  '+Validator.Errors[k].Message;
+      raise Exception.Create('test return violates heatinglabel_empfangen_2-5.xsd:'+Errors);
+    end;
+  finally
+    Doc.Free;
+    Validator.Free;
+    Schema.Free;
+  end;
+  Writeln('PASS: heatinglabel valid against the local itek XSDs');
+end;
+
+procedure CheckHeatinglabel(const BaseUrl, DocRoot: String; var AllErrors: String);
+var
+  Hl: TIDSConnect_Heatinglabel;
+  Cart: TIDSConnect_Warenkorb;
+  Xml, Error, OldHook: String;
+  Stream: TStringStream;
+  OldRequest: TIDSConnectOnRequest;
+  Request: String;
+begin
+  Hl := TIDSConnect_Heatinglabel.Create;
+  Cart := TIDSConnect_Warenkorb.Create;
+  try
+    //Sending
+    FillLabel(Hl);
+    Check(SaveLabel(Hl,Xml),'heatinglabel not written');
+    Check(Pos('xmlns="http://www.itek.de/Shop-Anbindung/Heatinglabel/"',Xml) > 0,'namespace missing');
+    Check(Pos('<PackageType>combination-heatpump</PackageType>',Xml) > 0,'package type missing');
+    Check(Pos('<IncludeProductLabels>true</IncludeProductLabels>',Xml) > 0,'IncludeProductLabels missing');
+    Check(Pos('<PackageSupplier>Heizungsbau &amp; Sohn &lt;Nord&gt;</PackageSupplier>',Xml) > 0,'supplier not escaped');
+    Check(Pos('<GTIN>4012345678901</GTIN>',Xml) > 0,'GTIN missing');
+    Check(Pos('<ConstructionTo>2025-12-31</ConstructionTo>',Xml) > 0,'construction date missing');
+    Check(Pos('<CustomerSubNo>1.1</CustomerSubNo>',Xml) > 0,'RefItems missing');
+    Check(Pos('<SupplierID>HERST</SupplierID>',Xml) > 0,'SupplierID missing');
+    Check(Pos('4000000000002',Xml) = 0,'GTIN sent together with SupplierID');
+    Check(Pos('<SupplierSubNo>',Xml) = 0,'sub number without position number written');
+    Check(Pos('<QTY>4</QTY>',Xml) > 0,'quantity missing');
+
+    //A position without identification is not sent
+    AllErrors := '';
+    Hl.Positions.AddItem.Shorttext := 'Regler';
+    Check(not SaveLabel(Hl,Xml),'position without identification sent');
+    Check(Pos('Position 3 (Regler)',AllErrors) > 0,'missing identification not reported: '+AllErrors);
+
+    CheckHeatinglabelXsd(DocRoot,Hl);
+
+    //Reading a return
+    AllErrors := '';
+    Stream := TStringStream.Create(HlReturn,TEncoding.UTF8);
+    try
+      Check(Hl.LoadFromStream(Stream),'heatinglabel return not read');
+    finally
+      Stream.Free;
+    end;
+    Check(AllErrors = '','valid return reported: '+AllErrors);
+    Check(Hl.Header.PackageType = idsHlPt_HeatingHeatpump,'package type not read');
+    Check(Hl.Header.LoadProfile = idsHlLp_XL,'load profile not read');
+    Check(Hl.Header.ModeOfUse = idsHlMu_Indoor,'mode of use not read');
+    Check(Hl.Header.SolarDeviceUsage = idsHlSu_Both,'solar usage not read');
+    Check(Hl.Header.PackageSupplier = 'Muster GmbH','supplier not read');
+    Check(Hl.Header.PDFs.Count = 2,'header PDFs not read');
+    Check(TEncoding.ASCII.GetString(Hl.Header.PDFs[0].Data) = '%PDF-1.4 hl','PDF with line break not decoded');
+    Check(Hl.Header.PDFs[1].PDFType = idsHlPdf_Articlelist,'PDF type not read');
+    Check(Hl.Positions.Count = 3,'positions not read');
+    Check((Hl.Positions[0].SupplierID = 'S1') and (Hl.Positions[0].GTIN = '4012345678901'),'identification not read');
+    Check(Hl.Positions[0].ConstructionFrom = EncodeDate(2020,1,1),'construction date not read');
+    Check((Hl.Positions[0].RefItems_Customer = '10') and (Hl.Positions[0].RefItems_CustomerSubNo = 'a') and
+          (Hl.Positions[0].RefItems_Supplier = '1'),'RefItems not read');
+    Check(Hl.Positions[0].Producttype = idsHlProd_RHG_WP,'product type not read');
+    Check(Hl.Positions[0].Status = idsHlSt_Used,'status not read');
+    Check(TEncoding.ASCII.GetString(Hl.Positions[0].PDF.Data) = '%PDF-1.4 pos','position PDF not decoded');
+    Check(Hl.Positions[0].PDF.PDFType = idsHlPdf_PositionProductLabel,'position PDF type not read');
+    Check(Hl.Positions[1].Status = idsHlSt_New,'status New not read');
+    Check(Hl.Positions[1].PDF.IsEmpty,'position without PDF has one');
+    Check(Hl.Positions[2].Status = idsHlSt_NotFound,'status NotFound not read');
+
+    //Unknown codes and broken base64 are reported, the rest is read
+    AllErrors := '';
+    Stream := TStringStream.Create(StringReplace(StringReplace(HlReturn,'<Status>New</Status>',
+      '<Status>Neu</Status>',[]),'JVBERi0xLjQgcG9z','JVBER!0xLjQgcG9z',[]),TEncoding.UTF8);
+    try
+      Check(Hl.LoadFromStream(Stream),'return with odd values not read');
+    finally
+      Stream.Free;
+    end;
+    Check(Pos('"Neu"',AllErrors) > 0,'unknown status not reported: '+AllErrors);
+    Check(Pos('wp.pdf',AllErrors) > 0,'broken base64 not reported: '+AllErrors);
+    Check(Hl.Positions[1].Status = idsHlSt_None,'unknown status kept');
+    Check(Hl.Positions[0].PDF.IsEmpty,'broken PDF kept');
+
+    //Misplaced padding is reported instead of yielding a shortened file
+    AllErrors := '';
+    Stream := TStringStream.Create(StringReplace(HlReturn,'JVBERi0xLjQgcG9z','JVBERi0x====',[]),TEncoding.UTF8);
+    try
+      Check(Hl.LoadFromStream(Stream),'return with bad padding not read');
+    finally
+      Stream.Free;
+    end;
+    Check(Pos('wp.pdf',AllErrors) > 0,'bad base64 padding not reported: '+AllErrors);
+    Check(Hl.Positions[0].PDF.IsEmpty,'PDF with bad padding kept');
+
+    //An empty or headerless return does not replace the list
+    for Xml in TArray<String>.Create(
+      '<Heatinglabel xmlns="http://www.itek.de/Shop-Anbindung/Heatinglabel/"/>',
+      '<Heatinglabel xmlns="http://www.itek.de/Shop-Anbindung/Heatinglabel/"><Header>'+
+        '<PackageSupplier>X</PackageSupplier></Header></Heatinglabel>') do
+    begin
+      AllErrors := '';
+      Stream := TStringStream.Create(Xml,TEncoding.UTF8);
+      try
+        Check(not Hl.LoadFromStream(Stream),'incomplete return accepted: '+Xml);
+      finally
+        Stream.Free;
+      end;
+      Check(Pos('nicht ',AllErrors) > 0,'incomplete return not reported');
+      Check(Hl.Positions.Count = 3,'list replaced by incomplete return');
+    end;
+
+    //A cart is not a heatinglabel; the previous content stays
+    AllErrors := '';
+    Stream := TStringStream.Create('<Warenkorb xmlns="http://www.itek.de/Shop-Anbindung/Warenkorb/"/>',TEncoding.UTF8);
+    try
+      Check(not Hl.LoadFromStream(Stream),'cart accepted as heatinglabel');
+    finally
+      Stream.Free;
+    end;
+    Check(Pos('kein Heatinglabel',AllErrors) > 0,'wrong root not reported: '+AllErrors);
+    Check(Hl.Positions.Count = 3,'heatinglabel replaced although reading failed');
+
+    //Fetch via the hook URL
+    Hl.Clear;
+    Check(TIDSConnect.TryFetchHeatinglabel(BaseUrl+'/heatinglabel',Hl,Error),'heatinglabel fetch failed: '+Error);
+    Check((Hl.Positions.Count = 3) and (Hl.Header.PDFs.Count = 2),'fetched heatinglabel incomplete');
+    Check(not TIDSConnect.TryFetchHeatinglabel(BaseUrl+'/sticky',Hl,Error),'cart fetched as heatinglabel');
+    Check(Pos('als Heatinglabel',Error) > 0,'wrong fetch error: '+Error);
+    Check(not TIDSConnect.TryFetchHeatinglabel(BaseUrl+'/pending',Hl,Error) and (Error = ''),
+          '404 reported as error: '+Error);
+
+    //Positions from a cart: only with EAN, position number kept or numbered
+    AllErrors := '';
+    Cart.Clear;
+    with Cart.Order.OrderItems.AddItem do
+    begin
+      ArtNo := 'K1';
+      EAN := '4012345678901';
+      Kurztext := 'Kessel';
+      Qty := 1;
+    end;
+    with Cart.Order.OrderItems.AddItem do
+    begin
+      ArtNo := 'ROHR';
+      Kurztext := 'Rohr';
+      Qty := 10;
+    end;
+    with Cart.Order.OrderItems.AddItem do
+    begin
+      EAN := '4000000000002';
+      Kurztext := 'Kollektor';
+      Qty := 3;
+      RefItems_Customer := '30';
+    end;
+    Hl.Clear;
+    Check(Hl.AddFromWarenkorb(Cart) = 2,'wrong number of positions from cart');
+    Check((Hl.Positions[0].GTIN = '4012345678901') and (Hl.Positions[0].RefItems_Customer = '1'),'first cart position wrong');
+    Check((Hl.Positions[1].Qty = 3) and (Hl.Positions[1].RefItems_Customer = '30'),'second cart position wrong');
+    Check(Pos('ROHR',AllErrors) > 0,'position without EAN not reported: '+AllErrors);
+    Check(SaveLabel(Hl,Xml),'heatinglabel from cart not written');
+
+    //HLS without input
+    AllErrors := '';
+    Check(not TIDSConnect.IDSConnectHLS('','c','u','p','',Hl),'HLS without URL accepted');
+    Check(Pos('HLS',AllErrors) > 0,'HLS without URL silent');
+
+    //HLS request: action, list and hook URL; the form file cannot be written
+    //(a folder name), so no browser opens
+    OldRequest := TIDSConnect.IDSCONNECT_ONREQUEST;
+    OldHook := TIDSConnect.IDSCONNECT_HOOKURL;
+    try
+      TIDSConnect.IDSCONNECT_HOOKURL := 'https://hook.example/idsconnect.php';
+      TIDSConnect.IDSCONNECT_ONREQUEST :=
+        procedure(const Url, Parameters: String)
+        begin
+          Request := Parameters;
+        end;
+      Request := '';
+      Check(not TIDSConnect.IDSConnectHLS('https://platform.invalid/ids','c','u','geheim',
+              TPath.GetTempPath,Hl,idsConnectVersion_2_5),'HLS without form file succeeded');
+      Check(Pos('action=HLS',Request) > 0,'HLS action missing: '+Request);
+      Check(Pos('version=2.5'+sLineBreak,Request) > 0,'HLS version missing: '+Request);
+      Check(Pos('<GTIN>4012345678901</GTIN>',Request) > 0,'HLS list missing: '+Request);
+      Check(Pos('hookurl=https://hook.example/idsconnect.php?sid=',Request) > 0,'HLS hook URL missing: '+Request);
+      Check(Pos('geheim',Request) = 0,'HLS password not masked');
+    finally
+      TIDSConnect.IDSCONNECT_ONREQUEST := OldRequest;
+      TIDSConnect.IDSCONNECT_HOOKURL := OldHook;
+    end;
+  finally
+    Cart.Free;
+    Hl.Free;
+  end;
+  Writeln('PASS: heatinglabel send/receive, PDFs, error cases, fetch, positions from cart');
+end;
+
 procedure Run;
 var
   Cart: TIDSConnect_Warenkorb;
@@ -562,6 +910,7 @@ begin
 
     CheckSerializer(LastError);
     CheckXsd(ParamStr(2));
+    CheckHeatinglabel(BaseUrl,ParamStr(2),AllErrors);
     Writeln('PASS: serializer versions, dropped 2.5.1 fields, forbidden characters');
     LastError := '';
     TIDSConnect.IDSConnectADT('','c','u','p','x',TPath.GetTempPath);

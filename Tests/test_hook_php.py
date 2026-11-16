@@ -29,9 +29,9 @@ def free_port():
         return s.getsockname()[1]
 
 
-def request(base, sid, data=None, query=''):
+def request(base, sid, data=None, query='', field='warenkorb'):
     url = f'{base}/idsconnect.php?sid={sid}{query}'
-    body = None if data is None else urllib.parse.urlencode({'warenkorb': data}).encode()
+    body = None if data is None else urllib.parse.urlencode({field: data}).encode()
     try:
         with urllib.request.urlopen(url, body, timeout=10) as res:
             LAST_ID[0] = res.headers.get('X-IDSConnect-Id')
@@ -108,6 +108,19 @@ with tempfile.TemporaryDirectory(prefix='idsconnect-php-') as tmp:
         check('sandbox' in (h.get('Content-Security-Policy') or ''), 'CSP sandbox missing')
         check(h.get('Cache-Control') == 'no-store', 'no-store missing')
 
+        # Heatinglabel return (action HLS): own field, same queue, larger limit
+        check(request(base, SID, '<Heatinglabel>1</Heatinglabel>', field='heatinglabel')[0] == 200,
+              'heatinglabel POST failed')
+        check(request(base, SID) == (200, '<Heatinglabel>1</Heatinglabel>'), 'heatinglabel return missing')
+        big = 'x' * (5 * 1024 * 1024)
+        check(request(base, SID, big)[0] == 413, 'cart above 4 MB accepted')
+        check(request(base, SID, big, field='heatinglabel')[0] == 200, 'heatinglabel with 5 MB refused')
+        check(request(base, SID)[1] == big, 'large heatinglabel not delivered')
+        # A POST without a known field must not deliver a waiting return
+        request(base, SID, '<Warenkorb>w</Warenkorb>')
+        check(request(base, SID, 'x', field='other')[0] == 400, 'POST without known field accepted')
+        check(request(base, SID) == (200, '<Warenkorb>w</Warenkorb>'), 'return lost or delivered to a POST')
+
         # GET with ?warenkorb=... must not store anything
         check(request(base, SID, query='&warenkorb=%3Cx%2F%3E')[0] == 404, 'GET treated as transfer')
         check(request(base, SID)[0] == 404, 'GET stored a transfer')
@@ -168,3 +181,4 @@ with tempfile.TemporaryDirectory(prefix='idsconnect-php-') as tmp:
 
 print('PASS: hook queue keeps every transfer and delivers each exactly once')
 print('PASS: storage outside the webroot, POST only, safe headers, total size limit')
+print('PASS: heatinglabel field with its own size limit, POST without known field refused')

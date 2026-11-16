@@ -332,6 +332,191 @@ type
     procedure Assign(_From : TIDSConnect_Warenkorb);
   end;
 
+  //########## Heatinglabel (Aktion HLS, ab IDS 2.3)
+  //Die Handwerkssoftware sendet die Artikelliste einer Heizungsanlage an eine
+  //Plattform, die das ErP-Label der Verbundanlage berechnet; zurueck kommen
+  //die Liste mit Status je Position und die Label als PDF.
+  //Schemas: heatinglabel_senden_2-5.xsd und heatinglabel_empfangen_2-5.xsd,
+  //Namensraum http://www.itek.de/Shop-Anbindung/Heatinglabel/.
+  //Bei allen Codelisten bedeutet der erste Wert "nicht angegeben".
+
+  //Anlagenfunktion
+  TIDSConnect_HLPackageFunction = (idsHlPf_None,
+                                   idsHlPf_Warmwater,   //warmwater   Warmwasser
+                                   idsHlPf_Heating,     //heating     Heizung
+                                   idsHlPf_Combination);//combination Kombi
+
+  //Anlagentyp
+  TIDSConnect_HLPackageType = (idsHlPt_None,
+                               idsHlPt_HeatingBoiler,                   //heating-boiler
+                               idsHlPt_HeatingCogeneration,             //heating-cogeneration
+                               idsHlPt_HeatingHeatpump,                 //heating-heatpump
+                               idsHlPt_HeatingLowtempHeatpump,          //heating-lowtemp-heatpump
+                               idsHlPt_HeatingSolidfuelBoiler,          //heating-solidfuel-boiler
+                               idsHlPt_HeatingSolidfuelCogeneration,    //heating-solidfuel-cogeneration
+                               idsHlPt_CombinationBoiler,               //combination-boiler
+                               idsHlPt_CombinationHeatpump,             //combination-heatpump
+                               idsHlPt_CombinationSolidfuelBoiler,      //combination-solidfuel-boiler
+                               idsHlPt_CombinationSolidfuelCogeneration,//combination-solidfuel-cogeneration
+                               idsHlPt_WarmwaterConventional,           //warmwater-conventional
+                               idsHlPt_WarmwaterHeatpump);              //warmwater-heatpump
+
+  //Lastprofil
+  TIDSConnect_HLLoadProfile = (idsHlLp_None, idsHlLp_M, idsHlLp_L, idsHlLp_XL, idsHlLp_XXL);
+
+  //Einbausituation des Speichers
+  TIDSConnect_HLModeOfUse = (idsHlMu_None,
+                             idsHlMu_Indoor,   //Indoor  innen
+                             idsHlMu_Outdoor); //Outdoor aussen
+
+  //Solarverwendung
+  TIDSConnect_HLSolarDeviceUsage = (idsHlSu_None,
+                                    idsHlSu_Both,    //both    Warmwasser und Heizung
+                                    idsHlSu_Water,   //water   Warmwasser
+                                    idsHlSu_Heating);//heating Heizung
+
+  //Produkttyp einer Position (nur in der Rueckgabe)
+  TIDSConnect_HLProducttype = (idsHlProd_None,
+                               idsHlProd_RHG_HK,      //Raumheizgeraete mit Heizkessel
+                               idsHlProd_RHG_KWK,     //Raumheizgeraete mit Kraft-Waerme-Kopplung
+                               idsHlProd_RHG_WP,      //Raumheizgeraete mit Waermepumpe
+                               idsHlProd_N_WP,        //Niedertemperatur-Waermepumpen
+                               idsHlProd_KHG_HK,      //Kombiheizgeraete mit Heizkessel
+                               idsHlProd_KHG_WP,      //Kombiheizgeraete mit Waermepumpe
+                               idsHlProd_K_WWB,       //Konventionelle Warmwasserbereiter
+                               idsHlProd_S_WWB,       //Solarbetriebene Warmwasserbereiter
+                               idsHlProd_WWB_WP,      //Warmwasserbereiter mit Waermepumpe
+                               idsHlProd_WWS,         //Warmwasserspeicher
+                               idsHlProd_TR,          //Temperaturregler
+                               idsHlProd_SR,          //Solarregler
+                               idsHlProd_TSR,         //Temperaturregler und Solarregler
+                               idsHlProd_SE,          //Solareinrichtung
+                               idsHlProd_KO,          //Kollektor
+                               idsHlProd_PSO,         //Pumpe Solar
+                               idsHlProd_SOLG,        //Solargruppe
+                               idsHlProd_VBA_RHG_TR_S,//Verbundanlage Raumheizgeraet, Temperaturregelung und Solareinrichtung
+                               idsHlProd_VBA_KHG_TR_S,//Verbundanlage Kombiheizgeraet, Temperaturregelung und Solareinrichtung
+                               idsHlProd_VBA_WWB_S,   //Verbundanlage Warmwasserbereiter mit Solareinrichtung
+                               idsHlProd_WRL,         //nur im Schema, ohne Beschreibung
+                               idsHlProd_FBS_HK);     //nur im Schema, ohne Beschreibung
+
+  //Status einer Position (nur in der Rueckgabe)
+  TIDSConnect_HLStatus = (idsHlSt_None,
+                          idsHlSt_NotUsed,  //Position nicht verwendet
+                          idsHlSt_NotFound, //Position nicht im Datenpool vorhanden
+                          idsHlSt_Used,     //Position in der Verbundanlage verwendet
+                          idsHlSt_New);     //verwendet und in der Plattform hinzugefuegt
+
+  //Art eines PDF-Dokuments (nur in der Rueckgabe)
+  TIDSConnect_HLPDFType = (idsHlPdf_None,
+                           idsHlPdf_PackageLabelAndFiche,  //Datenblatt und ErP-Label der Verbundanlage
+                           idsHlPdf_Articlelist,           //Liste der verwendeten Artikel
+                           idsHlPdf_PrimaryProductLabel,   //ErP-Label des Primaergeraets
+                           idsHlPdf_PositionProductLabel); //Produktlabel einer Position
+
+const
+  //Codes laut Schema, Index = Aufzaehlungswert
+  IDS_HL_PACKAGEFUNCTION_CODES : array[TIDSConnect_HLPackageFunction] of String =
+    ('','warmwater','heating','combination');
+  IDS_HL_PACKAGETYPE_CODES : array[TIDSConnect_HLPackageType] of String =
+    ('','heating-boiler','heating-cogeneration','heating-heatpump',
+     'heating-lowtemp-heatpump','heating-solidfuel-boiler',
+     'heating-solidfuel-cogeneration','combination-boiler','combination-heatpump',
+     'combination-solidfuel-boiler','combination-solidfuel-cogeneration',
+     'warmwater-conventional','warmwater-heatpump');
+  IDS_HL_LOADPROFILE_CODES : array[TIDSConnect_HLLoadProfile] of String =
+    ('','M','L','XL','XXL');
+  IDS_HL_MODEOFUSE_CODES : array[TIDSConnect_HLModeOfUse] of String =
+    ('','Indoor','Outdoor');
+  IDS_HL_SOLARDEVICEUSAGE_CODES : array[TIDSConnect_HLSolarDeviceUsage] of String =
+    ('','both','water','heating');
+  IDS_HL_PRODUCTTYPE_CODES : array[TIDSConnect_HLProducttype] of String =
+    ('','RHG-HK','RHG-KWK','RHG-WP','N-WP','KHG-HK','KHG-WP','K-WWB','S-WWB',
+     'WWB-WP','WWS','TR','SR','TSR','SE','KO','PSO','SOLG','VBA-RHG-TR-S',
+     'VBA-KHG-TR-S','VBA-WWB-S','WRL','FBS-HK');
+  IDS_HL_STATUS_CODES : array[TIDSConnect_HLStatus] of String =
+    ('','NotUsed','NotFound','Used','New');
+  IDS_HL_PDFTYPE_CODES : array[TIDSConnect_HLPDFType] of String =
+    ('','PackageLabelAndFiche','Articlelist','PrimaryProductLabel','PositionProductLabel');
+
+type
+  //Ein PDF-Dokument der Rueckgabe; Data enthaelt die dekodierte Datei
+  TIDSConnect_HeatinglabelPDF = class(TObject)
+  public
+    PDFName : String;   //Muss String 80 Dateiname
+    Data : TBytes;      //Muss Datei (im XML base64)
+    PDFType : TIDSConnect_HLPDFType; //Muss
+    constructor Create;
+    procedure Clear;
+    procedure Assign(_From : TIDSConnect_HeatinglabelPDF);
+    function IsEmpty : Boolean;
+    //Schreibt Data in eine Datei
+    procedure SaveToFile(const _Filename : String);
+  end;
+
+  TIDSConnect_HeatinglabelPDFList = class(TObjectList<TIDSConnect_HeatinglabelPDF>)
+  public
+    function AddItem : TIDSConnect_HeatinglabelPDF;
+  end;
+
+  //Kopfdaten der Verbundanlage
+  TIDSConnect_HeatinglabelHeader = class(TObject)
+  public
+    PackageFunction : TIDSConnect_HLPackageFunction;   //Senden Kann, Rueckgabe Muss
+    PackageType : TIDSConnect_HLPackageType;           //Senden Kann, Rueckgabe Muss
+    LoadProfile : TIDSConnect_HLLoadProfile;           //Kann
+    ModeOfUse : TIDSConnect_HLModeOfUse;               //Kann
+    PackageSupplier : String;                          //String 35, wer die Anlage zusammenstellt (erscheint auf dem Label); Senden Kann, Rueckgabe Muss
+    SolarDeviceUsage : TIDSConnect_HLSolarDeviceUsage; //Kann
+    IncludeProductLabels : Boolean;                    //Nur Senden: auch die Produktlabel der Positionen anfordern (nur true wird gesendet)
+    PDFs : TIDSConnect_HeatinglabelPDFList;            //Nur Rueckgabe, 1 bis 3
+    constructor Create;
+    destructor Destroy; override;
+    procedure Clear;
+    procedure Assign(_From : TIDSConnect_HeatinglabelHeader);
+  end;
+
+  //Position der Artikelliste. Zum Senden wird jede Position entweder ueber
+  //SupplierID und Productnumber (Kennungen der Plattform) oder ueber die
+  //GTIN (EAN) identifiziert - das Schema laesst nur eines von beiden zu; sind
+  //beide angegeben, werden SupplierID und Productnumber gesendet.
+  TIDSConnect_HeatinglabelPosition = class(TObject)
+  public
+    SupplierID : String;       //String 80 Lieferant in der Plattform; Rueckgabe Muss
+    Productnumber : String;    //String 80 Produkt in der Plattform; Rueckgabe Muss
+    GTIN : String;             //String 13
+    ConstructionFrom : TDate;  //Kann, hergestellt ab (0 = nicht angegeben)
+    ConstructionTo : TDate;    //Kann, hergestellt bis (0 = nicht angegeben)
+    Shorttext : String;        //Kann String 81
+    Qty : Integer;             //Kann, Menge in der Anlage; groesser 1 nur bei Kollektoren (0 = nicht angegeben)
+    RefItems_Customer : String;      //Kann String 35 Positionsnummer des Handwerkers
+    RefItems_CustomerSubNo : String; //Kann String 35 Unterpositionsnummer des Handwerkers
+    RefItems_Supplier : String;      //Kann String 35 Positionsnummer der Plattform
+    RefItems_SupplierSubNo : String; //Kann String 35 Unterpositionsnummer der Plattform
+    Producttype : TIDSConnect_HLProducttype; //Nur Rueckgabe
+    Status : TIDSConnect_HLStatus;           //Nur Rueckgabe, dort Muss
+    PDF : TIDSConnect_HeatinglabelPDF;       //Nur Rueckgabe: Produktlabel der Position (leer, wenn keines)
+    constructor Create;
+    destructor Destroy; override;
+    procedure Clear;
+    procedure Assign(_From : TIDSConnect_HeatinglabelPosition);
+  end;
+
+  TIDSConnect_HeatinglabelPositionList = class(TObjectList<TIDSConnect_HeatinglabelPosition>)
+  public
+    function AddItem : TIDSConnect_HeatinglabelPosition;
+  end;
+
+  TIDSConnect_Heatinglabel = class(TObject)
+  public
+    Header : TIDSConnect_HeatinglabelHeader;
+    Positions : TIDSConnect_HeatinglabelPositionList;
+    constructor Create;
+    destructor Destroy; override;
+    procedure Clear;
+    procedure Assign(_From : TIDSConnect_Heatinglabel);
+  end;
+
 implementation
 
 { TIDSConnect_LoginInfo }
@@ -835,6 +1020,192 @@ begin
   if Assigned(WarenkorbInfo) then begin WarenkorbInfo.Free; WarenkorbInfo := nil; end;
   if Assigned(Order) then begin Order.Free; Order := nil; end;
   inherited;
+end;
+
+{ TIDSConnect_HeatinglabelPDF }
+
+constructor TIDSConnect_HeatinglabelPDF.Create;
+begin
+  Clear;
+end;
+
+procedure TIDSConnect_HeatinglabelPDF.Clear;
+begin
+  PDFName := '';
+  Data := nil;
+  PDFType := idsHlPdf_None;
+end;
+
+procedure TIDSConnect_HeatinglabelPDF.Assign(_From: TIDSConnect_HeatinglabelPDF);
+begin
+  if (_From = nil) or (_From = Self) then
+    exit;
+  PDFName := _From.PDFName;
+  Data := Copy(_From.Data);
+  PDFType := _From.PDFType;
+end;
+
+function TIDSConnect_HeatinglabelPDF.IsEmpty: Boolean;
+begin
+  Result := Length(Data) = 0;
+end;
+
+procedure TIDSConnect_HeatinglabelPDF.SaveToFile(const _Filename: String);
+var
+  lStream : TFileStream;
+begin
+  lStream := TFileStream.Create(_Filename,fmCreate);
+  try
+    if Length(Data) > 0 then
+      lStream.WriteBuffer(Data[0],Length(Data));
+  finally
+    lStream.Free;
+  end;
+end;
+
+{ TIDSConnect_HeatinglabelPDFList }
+
+function TIDSConnect_HeatinglabelPDFList.AddItem: TIDSConnect_HeatinglabelPDF;
+begin
+  Result := TIDSConnect_HeatinglabelPDF.Create;
+  Add(Result);
+end;
+
+{ TIDSConnect_HeatinglabelHeader }
+
+constructor TIDSConnect_HeatinglabelHeader.Create;
+begin
+  PDFs := TIDSConnect_HeatinglabelPDFList.Create;
+  Clear;
+end;
+
+destructor TIDSConnect_HeatinglabelHeader.Destroy;
+begin
+  PDFs.Free;
+  inherited;
+end;
+
+procedure TIDSConnect_HeatinglabelHeader.Clear;
+begin
+  PackageFunction := idsHlPf_None;
+  PackageType := idsHlPt_None;
+  LoadProfile := idsHlLp_None;
+  ModeOfUse := idsHlMu_None;
+  PackageSupplier := '';
+  SolarDeviceUsage := idsHlSu_None;
+  IncludeProductLabels := false;
+  PDFs.Clear;
+end;
+
+procedure TIDSConnect_HeatinglabelHeader.Assign(_From: TIDSConnect_HeatinglabelHeader);
+var
+  i : Integer;
+begin
+  if (_From = nil) or (_From = Self) then
+    exit;
+  PackageFunction := _From.PackageFunction;
+  PackageType := _From.PackageType;
+  LoadProfile := _From.LoadProfile;
+  ModeOfUse := _From.ModeOfUse;
+  PackageSupplier := _From.PackageSupplier;
+  SolarDeviceUsage := _From.SolarDeviceUsage;
+  IncludeProductLabels := _From.IncludeProductLabels;
+  PDFs.Clear;
+  for i := 0 to _From.PDFs.Count-1 do
+    PDFs.AddItem.Assign(_From.PDFs[i]);
+end;
+
+{ TIDSConnect_HeatinglabelPosition }
+
+constructor TIDSConnect_HeatinglabelPosition.Create;
+begin
+  PDF := TIDSConnect_HeatinglabelPDF.Create;
+  Clear;
+end;
+
+destructor TIDSConnect_HeatinglabelPosition.Destroy;
+begin
+  PDF.Free;
+  inherited;
+end;
+
+procedure TIDSConnect_HeatinglabelPosition.Clear;
+begin
+  SupplierID := '';
+  Productnumber := '';
+  GTIN := '';
+  ConstructionFrom := 0;
+  ConstructionTo := 0;
+  Shorttext := '';
+  Qty := 0;
+  RefItems_Customer := '';
+  RefItems_CustomerSubNo := '';
+  RefItems_Supplier := '';
+  RefItems_SupplierSubNo := '';
+  Producttype := idsHlProd_None;
+  Status := idsHlSt_None;
+  PDF.Clear;
+end;
+
+procedure TIDSConnect_HeatinglabelPosition.Assign(_From: TIDSConnect_HeatinglabelPosition);
+begin
+  if (_From = nil) or (_From = Self) then
+    exit;
+  SupplierID := _From.SupplierID;
+  Productnumber := _From.Productnumber;
+  GTIN := _From.GTIN;
+  ConstructionFrom := _From.ConstructionFrom;
+  ConstructionTo := _From.ConstructionTo;
+  Shorttext := _From.Shorttext;
+  Qty := _From.Qty;
+  RefItems_Customer := _From.RefItems_Customer;
+  RefItems_CustomerSubNo := _From.RefItems_CustomerSubNo;
+  RefItems_Supplier := _From.RefItems_Supplier;
+  RefItems_SupplierSubNo := _From.RefItems_SupplierSubNo;
+  Producttype := _From.Producttype;
+  Status := _From.Status;
+  PDF.Assign(_From.PDF);
+end;
+
+{ TIDSConnect_HeatinglabelPositionList }
+
+function TIDSConnect_HeatinglabelPositionList.AddItem: TIDSConnect_HeatinglabelPosition;
+begin
+  Result := TIDSConnect_HeatinglabelPosition.Create;
+  Add(Result);
+end;
+
+{ TIDSConnect_Heatinglabel }
+
+constructor TIDSConnect_Heatinglabel.Create;
+begin
+  Header := TIDSConnect_HeatinglabelHeader.Create;
+  Positions := TIDSConnect_HeatinglabelPositionList.Create;
+end;
+
+destructor TIDSConnect_Heatinglabel.Destroy;
+begin
+  Positions.Free;
+  Header.Free;
+  inherited;
+end;
+
+procedure TIDSConnect_Heatinglabel.Clear;
+begin
+  Header.Clear;
+  Positions.Clear;
+end;
+
+procedure TIDSConnect_Heatinglabel.Assign(_From: TIDSConnect_Heatinglabel);
+var
+  i : Integer;
+begin
+  if (_From = nil) or (_From = Self) then
+    exit;
+  Header.Assign(_From.Header);
+  Positions.Clear;
+  for i := 0 to _From.Positions.Count-1 do
+    Positions.AddItem.Assign(_From.Positions[i]);
 end;
 
 end.

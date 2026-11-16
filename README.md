@@ -41,6 +41,7 @@ git add Lib/LandrixXML
 | Artikelsuche | AS | `TIDSConnect.IDSConnectAS` |
 | Logininformationen | LI | `TIDSConnect.IDSConnectLI` |
 | Schnittstellenversion | SV | `TIDSConnect.IDSConnectSV` |
+| Heatinglabel senden | HLS | `TIDSConnect.IDSConnectHLS` |
 
 `LI` und `SV` laufen als direkter POST ohne Browser und ohne Hook-URL:
 
@@ -63,6 +64,59 @@ Angaben auf „erforderlich"; `IDSConnectSVBestVersion` liefert dann
 nennt, denn nur 2.5 und 2.5.1 kann die Unit senden. Wer die Liste ohnehin
 mit `IDSConnectSV` abgefragt hat, wertet sie mit
 `TIDSConnect.BestSupportedVersion(Liste)` aus, ohne zweite Abfrage.
+
+## Heatinglabel (HLS)
+
+Mit `HLS` schickt die Handwerkssoftware die Artikelliste einer geplanten
+Heizungsanlage – Wärmeerzeuger, Regler, Speicher, Solarkollektoren – an eine
+Plattform, die daraus das ErP-Label (Energielabel) der Verbundanlage
+berechnet. Der Anwender kann die Liste dort ergänzen; zurück kommen die Liste
+mit einem Status je Position und die Label als PDF. Die Aktion steht seit
+IDS 2.3 in der Spezifikation und ist in 2.5 und 2.5.1 unverändert
+(`heatinglabel_senden_2-5.xsd` / `heatinglabel_empfangen_2-5.xsd`, eigener
+Namensraum `http://www.itek.de/Shop-Anbindung/Heatinglabel/`).
+
+**Was gesendet wird:** je Position eine Kennung – entweder die GTIN (EAN) oder
+Lieferanten-ID und Produktnummer *der Plattform* (das Schema lässt nur eines
+von beiden zu; sind beide gefüllt, gehen Lieferanten-ID und Produktnummer) –
+dazu optional Kurztext, Menge (größer 1 nur bei Kollektoren), Baujahr von/bis
+und die eigene Positionsnummer (`RefItems`), über die sich die Rückgabe
+zuordnen lässt. In den Kopfdaten optional Anlagenfunktion, Anlagentyp,
+Lastprofil, Einbausituation, wer die Anlage zusammenstellt (`PackageSupplier`,
+erscheint auf dem Label), Solarverwendung und ob auch die Produktlabel der
+Positionen gewünscht sind. Eine Position ohne Kennung wird gemeldet und nichts
+gesendet. Die Artikelnummer eines Großhändlers ist keine Produktnummer der
+Plattform; in der Praxis ist die GTIN die verlässliche Kennung.
+
+```pascal
+var lLabel := TIDSConnect_Heatinglabel.Create;
+try
+  lLabel.Header.PackageSupplier := 'Musterbetrieb Heizung';
+  lLabel.Header.IncludeProductLabels := True;
+  lLabel.AddFromWarenkorb(lWarenkorb);   //Positionen mit EAN als GTIN
+  if TIDSConnect.IDSConnectHLS(URL,Kundennr,Benutzer,Passwort,TempDatei,lLabel) then
+    for var lPos in lLabel.Positions do
+      ... lPos.Status (Used, NotUsed, NotFound, New), lPos.Producttype,
+          lPos.PDF.SaveToFile(...)
+  //Label der Anlage, Artikelliste, Label des Primärgeräts:
+  //lLabel.Header.PDFs[i].PDFType / .SaveToFile(...)
+finally
+  lLabel.Free;
+end;
+```
+
+`AddFromWarenkorb` übernimmt Positionen mit EAN (Kurztext, Menge, eigene
+Positionsnummer, ohne eine solche die laufende Nummer) und meldet die übrigen.
+Scheitert die Rückgabe, bleibt die gesendete Liste erhalten.
+
+Offen in der Spezifikation: In welchem Formularfeld die Plattform die
+Rückgabe an die Hook-URL schickt, steht dort nicht. Die Unit und
+`idsconnect.php` nehmen `heatinglabel` an (wie beim Senden). Eine Plattform
+mit HLS-Unterstützung ist uns noch nicht bekannt; getestet ist der Ablauf
+gegen die Schemas und einen simulierten Hook-Server. Im Beispielprojekt
+sendet der Schalter „Heatinglabel (HLS)" eine Beispielanlage an
+`HeatinglabelUrl` bzw. die IDS-Adresse des Anbieters und legt die PDFs unter
+`Dokumente\IDSConnect-Heatinglabel` ab.
 
 ## Version 2.5 oder 2.5.1
 
@@ -204,7 +258,13 @@ Zum Betrieb von `idsconnect.php`:
   `.htaccess` wirkt nur bei Apache mit `AllowOverride`; bei nginx oder
   `AllowOverride None` den Ordner in der Serverkonfiguration sperren.
   Abgelegt wird nur per POST, als `.dat`-Datei.
-* **Platz:** höchstens 4 MB je Übertragung und 64 MB insgesamt (Umgebungsvariable
+* **Felder:** `warenkorb` (WKE, WKS, AS) und `heatinglabel` (HLS). Ein POST
+  ohne eines der beiden wird mit HTTP 400 abgelehnt (413, wenn PHP den Inhalt
+  wegen `post_max_size` verworfen hat) – früher galt er als Abruf und bekam
+  eine wartende Rückgabe ausgeliefert.
+* **Platz:** höchstens 4 MB je Warenkorb, 32 MB je Heatinglabel (die PDFs
+  stecken base64-kodiert darin; `post_max_size` von
+  PHP entsprechend setzen) und 64 MB insgesamt (Umgebungsvariable
   `IDSCONNECT_MAX_TOTAL` in Byte), jede Datei zählt mindestens 4 KB; darüber
   antwortet das Skript mit HTTP 507. Nicht abgeholte Übertragungen verfallen
   nach einer Stunde.
@@ -378,6 +438,8 @@ Version=2.5
 DemoArticle=...
 ; optional, Shop beherrscht die Mehrfachrückgabe
 MultipleResult=1
+; optional, Adresse einer Heatinglabel-Plattform (HLS)
+HeatinglabelUrl=https://...
 ```
 
 Kommentare gehören auf eigene Zeilen: `TMemIniFile` liest einen Kommentar

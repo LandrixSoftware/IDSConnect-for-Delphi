@@ -48,6 +48,18 @@ RESPONSES = {
     # Text, CDATA and a comment in one element
     '/mixed-text': (200, CART.replace('<ArtNo>A&amp;B</ArtNo>',
                     '<ArtNo>ab<![CDATA[c&d]]><!--x-->e</ArtNo>').encode()),
+    # Return of a heatinglabel platform (action HLS)
+    '/heatinglabel': (200, (
+        '<Heatinglabel xmlns="http://www.itek.de/Shop-Anbindung/Heatinglabel/"><Header>'
+        '<PackageFunction>heating</PackageFunction><PackageType>heating-boiler</PackageType>'
+        '<PackageSupplier>X</PackageSupplier>'
+        '<PDF><PDFName>a.pdf</PDFName><PDFData>JVBERi0xLjQgaGw=</PDFData>'
+        '<PDFType>PackageLabelAndFiche</PDFType></PDF>'
+        '<PDF><PDFName>b.pdf</PDFName><PDFData>JVBERi0xLjQgaGw=</PDFData>'
+        '<PDFType>Articlelist</PDFType></PDF></Header>'
+        + ''.join(f'<Position><SupplierID>S</SupplierID><Productnumber>P{i}</Productnumber>'
+                  '<Status>Used</Status></Position>' for i in range(3))
+        + '</Heatinglabel>').encode()),
 }
 
 # Hook server with a queue: every GET consumes the oldest return.
